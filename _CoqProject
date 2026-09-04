@@ -1,1 +1,2 @@
 -R /home/opam/.local/lib/compcert/coq compcert
+-R theories Wasm2c
