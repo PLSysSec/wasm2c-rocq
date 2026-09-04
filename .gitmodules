@@ -1,0 +1,6 @@
+[submodule "WasmCert-Coq"]
+	path = WasmCert-Coq
+	url = https://github.com/WasmCert/WasmCert-Coq.git
+[submodule "CompCert"]
+	path = CompCert
+	url = https://github.com/AbsInt/CompCert.git
