@@ -48,7 +48,7 @@ COPY --chown=opam:opam CompCert CompCert
 # Install CompCert (note: CompCert target arch pinned at x86_64)
 ARG CC_TARGET=x86_64-linux
 RUN cd CompCert && \
-    opam exec -- ./configure -install-rocqdev -use-external-Flocq -no-runtime-lib \
+    opam exec -- ./configure -clightgen -install-rocqdev -use-external-Flocq -no-runtime-lib \
         -prefix /home/opam/.local "${CC_TARGET}"
 
 # Build CompCert proofs
