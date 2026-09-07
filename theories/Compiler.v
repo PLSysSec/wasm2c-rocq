@@ -1,6 +1,6 @@
-From Wasm Require Import datatypes operations.
+From Wasm Require Import datatypes operations numerics.
 From Stdlib Require Import PArith.
-From compcert Require cfrontend.Clight cfrontend.Ctypes common.AST common.Errors.
+From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
 Require Import List.
 Import ListNotations.
@@ -51,94 +51,72 @@ i32.const 3
 
 *)
 
-Definition compiler_state : Record {
-  next : Nat
-}
+Record compiler_state : Type := {
+  next : nat
+}.
+
+Definition increment_csnext (cs : compiler_state) : compiler_state :=
+  {| next := S cs.(next) |}.
+
+Definition decrement_csnext (cs : compiler_state) : compiler_state :=
+  {| next := pred cs.(next) |}.
+
+(* stack slot number -> Clight identifier *)
+Definition slot_ident (n : nat) : AST.ident := Pos.of_succ_nat n.
 
 Definition instr_to_statement (cs : compiler_state) (instr: basic_instruction) : option (list Clight.statement * compiler_state) :=
   match instr with
   | BI_const_num val => match val with
-    | VAL_int32 num => ([Sdo (Eassign (Evar cs.next int32_t) (Eval num int32_t))], increment_csnext(cs))
-    | VAL_int64  =>  ([Sdo (Eassign (Evar cs.next int64_t) (Eval num int64_t))], increment_csnext(cs))
-    | VAL_float32 =>  ([Sdo (Eassign (Evar cs.next f32_t) (Eval num f32_t))], increment_csnext(cs))
-    | VAL_float64 =>  ([Sdo (Eassign (Evar cs.next f64_t) (Eval num f64_t))], increment_csnext(cs))
-  | BI_unop => None
-  | BI_binop op => match op with
+    | VAL_int32 num => Some ([Clight.Sassign (Clight.Evar (slot_ident cs.(next)) tuint)
+                                (Clight.Econst_int (Integers.Int.repr (Wasm_int.Z_of_uint i32m num)) tuint)], increment_csnext cs)
+    | VAL_int64 num => Some ([Clight.Sassign (Clight.Evar (slot_ident cs.(next)) tulong)
+                                (Clight.Econst_long (Integers.Int64.repr (Wasm_int.Z_of_uint i64m num)) tulong)], increment_csnext cs)
+    | VAL_float32 num => Some ([Clight.Sassign (Clight.Evar (slot_ident cs.(next)) tfloat)
+                                (Clight.Econst_single num tfloat)], increment_csnext cs)
+    | VAL_float64 num => Some ([Clight.Sassign (Clight.Evar (slot_ident cs.(next)) tdouble)
+                                (Clight.Econst_float num tdouble)], increment_csnext cs)
+    end
+  | BI_binop _ op => match op with
     | Binop_i op' => match op' with
-      | BOI_add => ([Sdo (Eassign (Evar (cs.next - 2) i32_t) (Ebinop add (Evar (cs.next - 1)) (cs.next - 2) ))])
-      | BOI_sub => ([Sdo (Eassign (Evar (cs.next - 2) i32_t) (Ebinop sub (Evar (cs.next - 1)) (cs.next - 2) ))])
-      | None
+      | BOI_add => Some ([Clight.Sassign (Clight.Evar (slot_ident (cs.(next) - 2)) tuint)
+                            (Clight.Ebinop Cop.Oadd (Clight.Evar (slot_ident (cs.(next) - 2)) tuint)
+                                                    (Clight.Evar (slot_ident (cs.(next) - 1)) tuint) tuint)], decrement_csnext cs)
+      | BOI_sub => Some ([Clight.Sassign (Clight.Evar (slot_ident (cs.(next) - 2)) tuint)
+                            (Clight.Ebinop Cop.Osub (Clight.Evar (slot_ident (cs.(next) - 2)) tuint)
+                                                    (Clight.Evar (slot_ident (cs.(next) - 1)) tuint) tuint)], decrement_csnext cs)
+      | _ => None
       end
     | _ => None
     end
-  | BI_testop
-  | BI_relop
-  | BI_cvtop
-  (* no simd in vanilla compcert *)
-  | BI_const_vec => None
-  | BI_vunop => None
-  | BI_vbinop => None
-  | BI_vternop => None
-  | BI_vtestop => None
-  | BI_vshiftop => None
-  | BI_splat_vec => None
-  | BI_extract_vec => None
-  | BI_replace_vec => None
-  (* end simd *)
-  | BI_ref_null
-  | BI_ref_is_null
-  | BI_ref_func
-  | BI_drop
-  | BI_select
-  | BI_local_get
-  | BI_local_set
-  | BI_local_tee
-  | BI_global_get
-  | BI_global_set
-  | BI_table_get
-  | BI_table_set
-  | BI_table_size
-  | BI_table_grow
-  | BI_table_fill
-  | BI_table_copy
-  | BI_table_init
-  | BI_elem_drop
-  | BI_load
-  | BI_load_vec
-  | BI_load_vec_lane
-  | BI_store
-  | BI_store_vec
-  | BI_store_vec_lane : vwidth -> memarg -> laneidx -> basic_instruction
-  | BI_memory_size
-  | BI_memory_grow
-  | BI_memory_fill
-  | BI_memory_copy
-  | BI_memory_init: dataidx -> basic_instruction
-  | BI_data_drop: dataidx -> basic_instruction
-(** std-doc:
-Instructions in this group affect the flow of control.
-**)
-  | BI_nop
-  | BI_unreachable
-  | BI_block : block_type -> list basic_instruction -> basic_instruction
-  | BI_loop : block_type -> list basic_instruction -> basic_instruction
-  | BI_if : block_type -> list basic_instruction -> list basic_instruction -> basic_instruction
-  | BI_br : labelidx -> basic_instruction
-  | BI_br_if : labelidx -> basic_instruction
-  | BI_br_table : list labelidx -> labelidx -> basic_instruction
-  | BI_return
-  | BI_call : funcidx -> basic_instruction
-  | BI_call_indirect : tableidx -> typeidx -> basic_instruction
-  | BI_return_call : funcidx -> basic_instruction                                          
-  | BI_return_call_indirect : tableidx -> typeidx -> basic_instruction    
+  (* everything else, including the simd instructions that have no counterpart
+     in vanilla compcert, is not translated yet *)
+  | _ => None
   end.
 
 
 Definition seq_of_list (l: list Clight.statement) : Clight.statement :=
   List.fold_right Clight.Ssequence Clight.Sskip l.
 
+Fixpoint instrs_to_statements (cs: compiler_state) (body: list basic_instruction)
+    : option (list Clight.statement * compiler_state) :=
+  match body with
+  | nil => Some (nil, cs)
+  | instr :: body' =>
+    match instr_to_statement cs instr with
+    | Some (ss, cs') =>
+      match instrs_to_statements cs' body' with
+      | Some (ss', cs'') => Some (ss ++ ss', cs'')
+      | None => None
+      end
+    | None => None
+    end
+  end.
+
 Definition compile_body (body: expr) : option Clight.statement :=
-  Some (seq_of_list (List.map instr_to_statement body)).
+  match instrs_to_statements {| next := 0 |} body with
+  | Some (ss, _) => Some (seq_of_list ss)
+  | None => None
+  end.
 
 (*  Clight.function := { 
       fn_return: type;                // Can figure out from function type
