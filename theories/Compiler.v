@@ -43,8 +43,15 @@ Definition clight_of_functype (next: AST.ident) (tf: function_type)
   end.
 
 
-Definition compile_body (body: expr) : option Clight.statement.
+Definition instr_to_statement (instr: basic_instruction) : Clight.statement.
 Admitted.
+
+Definition seq_of_list (l: list Clight.statement) : Clight.statement :=
+  List.fold_right Clight.Ssequence Clight.Sskip l.
+
+Definition compile_body (body: expr) : option Clight.statement :=
+  Some (seq_of_list (List.map instr_to_statement body)).
+
 (*  Clight.function := { 
       fn_return: type;                // Can figure out from function type
       fn_callconv: calling_convention := {
