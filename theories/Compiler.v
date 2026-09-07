@@ -42,9 +42,97 @@ Definition clight_of_functype (next: AST.ident) (tf: function_type)
   | _, _ => None
   end.
 
+(* 
+wasm2c represents top two vars in stack
 
-Definition instr_to_statement (instr: basic_instruction) : Clight.statement.
-Admitted.
+i32.const 3
+ 
+=> int32_t i0 = 3;
+
+*)
+
+Definition compiler_state : Record {
+  next : Nat
+}
+
+Definition instr_to_statement (cs : compiler_state) (instr: basic_instruction) : option (list Clight.statement * compiler_state) :=
+  match instr with
+  | BI_const_num val => match val with
+    | VAL_int32 num => ([Sdo (Eassign (Evar cs.next int32_t) (Eval num int32_t))], increment_csnext(cs))
+    | VAL_int64  =>  ([Sdo (Eassign (Evar cs.next int64_t) (Eval num int64_t))], increment_csnext(cs))
+    | VAL_float32 =>  ([Sdo (Eassign (Evar cs.next f32_t) (Eval num f32_t))], increment_csnext(cs))
+    | VAL_float64 =>  ([Sdo (Eassign (Evar cs.next f64_t) (Eval num f64_t))], increment_csnext(cs))
+  | BI_unop => None
+  | BI_binop op => match op with
+    | Binop_i op' => match op' with
+      | BOI_add => ([Sdo (Eassign (Evar (cs.next - 2) i32_t) (Ebinop add (Evar (cs.next - 1)) (cs.next - 2) ))])
+      | BOI_sub => ([Sdo (Eassign (Evar (cs.next - 2) i32_t) (Ebinop sub (Evar (cs.next - 1)) (cs.next - 2) ))])
+      | None
+      end
+    | _ => None
+    end
+  | BI_testop
+  | BI_relop
+  | BI_cvtop
+  (* no simd in vanilla compcert *)
+  | BI_const_vec => None
+  | BI_vunop => None
+  | BI_vbinop => None
+  | BI_vternop => None
+  | BI_vtestop => None
+  | BI_vshiftop => None
+  | BI_splat_vec => None
+  | BI_extract_vec => None
+  | BI_replace_vec => None
+  (* end simd *)
+  | BI_ref_null
+  | BI_ref_is_null
+  | BI_ref_func
+  | BI_drop
+  | BI_select
+  | BI_local_get
+  | BI_local_set
+  | BI_local_tee
+  | BI_global_get
+  | BI_global_set
+  | BI_table_get
+  | BI_table_set
+  | BI_table_size
+  | BI_table_grow
+  | BI_table_fill
+  | BI_table_copy
+  | BI_table_init
+  | BI_elem_drop
+  | BI_load
+  | BI_load_vec
+  | BI_load_vec_lane
+  | BI_store
+  | BI_store_vec
+  | BI_store_vec_lane : vwidth -> memarg -> laneidx -> basic_instruction
+  | BI_memory_size
+  | BI_memory_grow
+  | BI_memory_fill
+  | BI_memory_copy
+  | BI_memory_init: dataidx -> basic_instruction
+  | BI_data_drop: dataidx -> basic_instruction
+(** std-doc:
+Instructions in this group affect the flow of control.
+**)
+  | BI_nop
+  | BI_unreachable
+  | BI_block : block_type -> list basic_instruction -> basic_instruction
+  | BI_loop : block_type -> list basic_instruction -> basic_instruction
+  | BI_if : block_type -> list basic_instruction -> list basic_instruction -> basic_instruction
+  | BI_br : labelidx -> basic_instruction
+  | BI_br_if : labelidx -> basic_instruction
+  | BI_br_table : list labelidx -> labelidx -> basic_instruction
+  | BI_return
+  | BI_call : funcidx -> basic_instruction
+  | BI_call_indirect : tableidx -> typeidx -> basic_instruction
+  | BI_return_call : funcidx -> basic_instruction                                          
+  | BI_return_call_indirect : tableidx -> typeidx -> basic_instruction    
+  end.
+
 
 Definition seq_of_list (l: list Clight.statement) : Clight.statement :=
   List.fold_right Clight.Ssequence Clight.Sskip l.
