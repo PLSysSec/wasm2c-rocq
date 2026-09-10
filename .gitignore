@@ -3,3 +3,8 @@
 **/*.vo
 **/*.vok
 **/*.vos
+**/*.cmi
+**/*.cmx
+**/*.mli
+**/*.o
+compiler/wasm2c
