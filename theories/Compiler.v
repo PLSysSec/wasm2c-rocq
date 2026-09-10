@@ -39,32 +39,37 @@ Fixpoint wasm_types_to_clight_types (ts : list value_type)
     end
   end.
 
-Fixpoint wasm_locals_to_clight_locals (base : N) (ts : list value_type) 
+(** turn a list of Wasm variables into a list of Clight variables. base is the 
+    first fresh identifier *)
+Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type) 
   : res (list (AST.ident * Ctypes.type)) :=
   match ts with
   | nil => OK nil
   | t :: ts' =>
     match wasm_type_to_clight_type t,
-          wasm_locals_to_clight_locals (N.succ base) ts' with
+          wasm_vars_to_clight_vars (N.succ base) ts' with
     | OK ty, OK rest =>  OK (((ident_of_local base), ty) :: rest)
     | Error err, _ => Error err
     | _, Error err => Error err
     end
   end.
 
+(** parameters start at identifier 0 *)
 Definition wasm_params_to_clight_params (ts : list value_type) 
   : res (list (AST.ident * Ctypes.type)) :=
-  wasm_locals_to_clight_locals 0 ts.
+  wasm_vars_to_clight_vars 0 ts.
 
+(** convert Wasm return type into Clight return type *)
 Definition wasm_return_to_clight_return (ts : list value_type) 
   : res Ctypes.type :=
   match ts with
-  | nil      => OK tvoid
-  | t :: nil => wasm_type_to_clight_type t
+  | nil         => OK tvoid
+  | t :: nil    => wasm_type_to_clight_type t
   | _ :: _ :: _ => Error (msg "multi-value return not supported")
   end.
 
-(* return type, calling_convention, params *)
+(** split Wasm function_type into Clight return type, calling convention, and 
+    parameters *)
 Definition clight_of_functype (tf : function_type)
   : res (
     Ctypes.type * 
@@ -80,6 +85,7 @@ Definition clight_of_functype (tf : function_type)
     end
   .
 
+(** compiler state records the current stack and the max depth of the stack *)
 Record compiler_state : Type := {
   stack : list value_type; (* head is the top of the stack *)
   max_depth : N
@@ -93,6 +99,7 @@ Definition cs_push (cs : compiler_state) (t : value_type) : compiler_state :=
     max_depth := N.max cs.(max_depth) (N.succ (depth cs.(stack)))
   |}.
 
+(** turn a Wasm type + natural number into a Clight identifier *)
 Definition slot_ident (t : value_type) (d : N) : res AST.ident :=
   match t with
   | T_num T_i32 => OK (ident_of_i32_slot d)
@@ -103,7 +110,8 @@ Definition slot_ident (t : value_type) (d : N) : res AST.ident :=
   | _ => Error (msg "unsupported stack slot type")
   end.
 
-(* return a Clight expr representing depth N of the stack*)
+(** return a Clight expression for the variable at depth d in the stack. depth 0
+    is the head, etc. *)
 Definition slot_expr (t : value_type) (d : N) : res Clight.expr :=
   match slot_ident t d, wasm_type_to_clight_type t with
   | OK id, OK ty => OK (Clight.Etempvar id ty)
@@ -111,22 +119,24 @@ Definition slot_expr (t : value_type) (d : N) : res Clight.expr :=
   | _, Error err => Error err
   end.
 
-Definition push_const (t : value_type) (cs : compiler_state) (e : Clight.expr)
+(** return a Clight statement representing a push to the stack *)
+Definition push_expr (t : value_type) (cs : compiler_state) (e : Clight.expr)
   : res (list Clight.statement * compiler_state) :=
   match slot_ident t (depth cs.(stack)) with
   | OK id => OK ([Clight.Sset id e], cs_push cs t)
   | Error err => Error err
   end.
 
+(** convert a single Wasm basic_instruction to 1+ Clight statements *)
 Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction) 
   : res (list Clight.statement * compiler_state) :=
   match instr with
   | BI_const_num val => 
     match val with
-    | VAL_int32 num   => push_const (T_num T_i32) cs (Clight.Econst_int (Integers.Int.repr (Wasm_int.Z_of_uint i32m num)) tuint)
-    | VAL_int64 num   => push_const (T_num T_i64) cs (Clight.Econst_long (Integers.Int64.repr (Wasm_int.Z_of_uint i64m num)) tulong)
-    | VAL_float32 num => push_const (T_num T_f32) cs (Clight.Econst_single num tfloat)
-    | VAL_float64 num => push_const (T_num T_f64) cs (Clight.Econst_float num tdouble)
+    | VAL_int32 num   => push_expr (T_num T_i32) cs (Clight.Econst_int (Integers.Int.repr (Wasm_int.Z_of_uint i32m num)) tuint)
+    | VAL_int64 num   => push_expr (T_num T_i64) cs (Clight.Econst_long (Integers.Int64.repr (Wasm_int.Z_of_uint i64m num)) tulong)
+    | VAL_float32 num => push_expr (T_num T_f32) cs (Clight.Econst_single num tfloat)
+    | VAL_float64 num => push_expr (T_num T_f64) cs (Clight.Econst_float num tdouble)
     end
   | BI_binop T_i32 (Binop_i op') =>
     match op', cs.(stack) with 
@@ -147,9 +157,11 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | _ => Error (msg "unsupported instruction")
   end.
 
+(** turn a list of Clight statements into a single statement using Ssequence *)
 Definition seq_of_list (l : list Clight.statement) : Clight.statement :=
   List.fold_right Clight.Ssequence Clight.Sskip l.
 
+(** turn a list of Wasm instructions into a list of Clight statements*)
 Fixpoint instrs_to_statements 
   (cs : compiler_state) 
   (body : list basic_instruction)
@@ -167,10 +179,12 @@ Fixpoint instrs_to_statements
     end
   end.
 
+(** default compiler state has empty stack *)
 Definition cs_initial : compiler_state := {|
   stack := nil; max_depth := 0
 |}.
 
+(** turn Wasm return type into Clight return statement *)
 Definition return_stmt (ret_type : list value_type) (cs : compiler_state)
   : res Clight.statement :=
   match ret_type, cs.(stack) with
@@ -187,6 +201,7 @@ Definition return_stmt (ret_type : list value_type) (cs : compiler_state)
   | _ :: _ :: _, _ => Error (msg "multi-value returns are not supported")
   end.
 
+(** compile the body of a Wasm function into a Clight statement *)
 Definition compile_body (ret_type : list value_type) (body : expr) 
   : res (Clight.statement * compiler_state) :=
   match instrs_to_statements cs_initial body with
@@ -198,30 +213,14 @@ Definition compile_body (ret_type : list value_type) (body : expr)
   | Error err => Error err
   end.
 
-(*  Clight.function := { 
-      fn_return: type;                // Can figure out from function type
-      fn_callconv: calling_convention := {
-        cc_vararg: option Z; // variable args? I think should be None
-        cc_unproto: bool;    // <<old-style unprototyped function>> I assume just false
-        cc_structret: bool   // I think never returns a struct? Unless multi return
-      }
-      fn_params: list (ident * type); // Types can come from function type, idents come from stack?
-      fn_vars: list (ident * type);   // Addressable local variables -- [] I think bc wasm locals non-addressable
-      fn_temps: list (ident * type);  // Non-addressable local variables func.(modfunc_locals) i think
-      fn_body: statement              // func.(modfunc_body)
-    }
-
-    func_type := lookup_N m.(mod_types) func.(modfunc_type)
-*)
-
+(** generate a list of h Clight temps of a given type *)
 Definition slot_temps (mk : N -> AST.ident) (ty : Ctypes.type) (h : N)
   : list (AST.ident * Ctypes.type) :=
   List.map (fun d => (mk (N.of_nat d), ty)) (List.seq 0 (N.to_nat h)).
 
-(*
-    module_func defined in WasmCert-Coq/theories/datatypes.v:639
-    Clight.function defined in CompCert/cfrontend/Clight.v:135
-*)
+(** compile a Wasm function. Note: module_func defined in 
+    WasmCert-Coq/theories/datatypes.v:639; Clight.function defined in 
+    CompCert/cfrontend/Clight.v:135 *)
 Definition compile_func (m : module) (func : module_func) 
   : res Clight.function :=
   match lookup_N m.(mod_types) func.(modfunc_type) with
@@ -229,7 +228,7 @@ Definition compile_func (m : module) (func : module_func)
     match clight_of_functype func_type with
     | OK (ret_type, cc, params) =>
       (* local idxs start after params *)
-      match wasm_locals_to_clight_locals (N.of_nat (List.length ts1))
+      match wasm_vars_to_clight_vars (N.of_nat (List.length ts1))
                                          func.(modfunc_locals) with
       | OK locals =>
         match compile_body ts2 func.(modfunc_body) with
@@ -253,9 +252,12 @@ Definition compile_func (m : module) (func : module_func)
   | None => Error (msg "function type couldn't be found in binary")
 end.
 
+(* turn a Wasm name into a string *)
 Definition string_of_name (n : name) : String.string :=
   String.string_of_list_byte n.
 
+(** compile a list of Wasm imported functions into a list of Clight external 
+    functions. idx is the ident number to start at *)
 Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
   match imps with 
@@ -287,6 +289,8 @@ Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
     end
   end.
 
+(** compile Wasm functions into Clight functions, assigning identifiers starting 
+    from idx *)
 Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
   match funcs with
@@ -300,22 +304,21 @@ Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
     end
   end.
 
+(** count the number of imported functions in a module *)
 Definition n_imported_functions (m : module) : N :=
   N.of_nat (List.length (List.filter
     (fun imp => match imp.(imp_desc) with MID_func _ => true | _ => false end)
     m.(mod_imports))).
 
+(** compile the functions from a Wasm module into Clight *)
 Definition compile_funcs (m : module)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
   (* start internal functions after the external calls *)
   compile_funcs_from m (n_imported_functions m) m.(mod_funcs).
 
 
-(*
-    - module defined in WasmCert-Coq/theories/datatypes.v:740
-    - Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 (res discharges
-      a proof obligation)
-*)
+(** Note: module defined in WasmCert-Coq/theories/datatypes.v:740; 
+    Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)
 Definition compile (m : module) : Errors.res Clight.program :=
   match compile_func_imports m 0 m.(mod_imports), compile_funcs m with
   | OK imports, OK defs =>
@@ -323,4 +326,3 @@ Definition compile (m : module) : Errors.res Clight.program :=
   | Error err, _ => Error err
   | _, Error err => Error err
   end.
-
