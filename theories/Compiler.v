@@ -98,7 +98,7 @@ Definition slot_ident (t : value_type) (d : N) : res AST.ident :=
   end.
 
 (** return a Clight expression for the variable at depth d in the stack. depth 0
-    is the head, etc. *)
+    is the bottom, etc. *)
 Definition slot_expr (t : value_type) (d : N) : res Clight.expr :=
   do id <- slot_ident t d;
   do ty <- wasm_type_to_clight_type t;
@@ -121,20 +121,98 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
     | VAL_float32 num => push_expr (T_num T_f32) cs (Clight.Econst_single num tfloat)
     | VAL_float64 num => push_expr (T_num T_f64) cs (Clight.Econst_float num tdouble)
     end
-  | BI_binop T_i32 (Binop_i op') =>
-    match op', cs.(stack) with 
-    | BOI_add, T_num T_i32 :: T_num T_i32 :: rest =>
-      let d2 := depth rest in
-        do id2 <- slot_ident (T_num T_i32) d2;
-        do e1  <- slot_expr  (T_num T_i32) d2;
-        do e2  <- slot_expr  (T_num T_i32) (N.succ d2);
-        OK (
-          [Clight.Sset id2 (Clight.Ebinop Cop.Oadd e1 e2 tuint)],
-          cs_push {| stack := rest; max_depth := cs.(max_depth) |} (T_num T_i32)
-        )
-    | _, _ => Error (msg "unsupported i32 binary operation")
+  | BI_unop ty op => Error (msg "unop not supported") 
+  | BI_binop ty op =>
+    match ty with
+    | T_i32 =>
+      match op with
+      | Binop_i BOI_add =>
+        match cs.(stack) with
+        | T_num T_i32 :: T_num T_i32 :: rest =>
+          let d2 := depth rest in
+            do id2 <- slot_ident (T_num T_i32) d2;
+            do e1  <- slot_expr  (T_num T_i32) d2;
+            do e2  <- slot_expr  (T_num T_i32) (N.succ d2);
+            OK (
+              [Clight.Sset id2 (Clight.Ebinop Cop.Oadd e1 e2 tuint)],
+              cs_push {| stack := rest; max_depth := cs.(max_depth) |} (T_num T_i32)
+            )
+        | _ => Error (msg "stack in the wrong shape")
+        end
+      | Binop_i BOI_sub => Error (msg "i32.sub not supported")
+      | Binop_i BOI_mul => Error (msg "i32.mul not supported")
+      | Binop_i (BOI_div s) => Error (msg "i32.div not supported")
+      | Binop_i (BOI_rem s) => Error (msg "i32.rem not supported")
+      | Binop_i BOI_and => Error (msg "i32.and not supported")
+      | Binop_i BOI_or => Error (msg "i32.or not supported")
+      | Binop_i BOI_xor => Error (msg "i32.xor not supported")
+      | Binop_i BOI_shl => Error (msg "i32.shl not supported")
+      | Binop_i (BOI_shr s) => Error (msg "i32.shr not supported")
+      | Binop_i BOI_rotl => Error (msg "i32.rotl not supported")
+      | Binop_i BOI_rotr => Error (msg "i32.rotr not supported")
+      | Binop_f _ => Error (msg "floating point ops not allowed for i32")
+      end
+    | T_i64 => Error (msg "i64 binops not supported")
+    | T_f32 => Error (msg "f32 binops not supported")
+    | T_f64 => Error (msg "f64 binops not supported")
     end
-  | _ => Error (msg "unsupported instruction")
+  | BI_testop ty op => Error (msg "testop not supported")
+  | BI_relop ty op => Error (msg "relop not supported")
+  | BI_cvtop ty1 op ty2 opt_sx => Error (msg "cvtop not supported")
+  (* simd not supported in CompCert *)
+  | BI_const_vec vals => Error (msg "const_vec not supported")
+  | BI_vunop op => Error (msg "vunop not supported")
+  | BI_vbinop op => Error (msg "vbinop not supported")
+  | BI_vternop op => Error (msg "vternop not supported")
+  | BI_vtestop op => Error (msg "vtestop not supported")
+  | BI_vshiftop op => Error (msg "vshiftop not supported")
+  | BI_splat_vec shape => Error (msg "splat_vec not supported")
+  | BI_extract_vec shape opt_sx ln_idx => Error (msg "extract_vec not supported")
+  | BI_replace_vec shape ln_idx => Error (msg "replace_vec not supported")
+  (* end simd *)
+  | BI_ref_null ty => Error (msg "ref_null not supported")
+  | BI_ref_is_null => Error (msg "ref_is_null not supported")
+  | BI_ref_func idx => Error (msg "ref_func not supported")
+  | BI_drop => Error (msg "drop not supported")
+  | BI_select opt_vals => Error (msg "select not supported")
+  | BI_local_get idx => Error (msg "local_get not supported")
+  | BI_local_set idx => Error (msg "local_set not supported")
+  | BI_local_tee idx => Error (msg "local_tee not supported")
+  | BI_global_get idx => Error (msg "global_get not supported")
+  | BI_global_set idx => Error (msg "global_set not supported")
+  | BI_table_get idx => Error (msg "table_get not supported")
+  | BI_table_set idx => Error (msg "table_set not supported")
+  | BI_table_size idx => Error (msg "table_size not supported")
+  | BI_table_grow idx => Error (msg "table_grow not supported")
+  | BI_table_fill idx => Error (msg "table_fill not supported")
+  | BI_table_copy idx1 idx2 => Error (msg "table_copy not supported")
+  | BI_table_init tidx eidx => Error (msg "table_init not supported")
+  | BI_elem_drop idx => Error (msg "elem_drop not supported")
+  | BI_load ty opt_ty_sx arg => Error (msg "load not supported")
+  | BI_load_vec varg marg => Error (msg "load_vec not supported")
+  | BI_load_vec_lane vw ma li => Error (msg "load_vec_lane not supported")
+  | BI_store nt opt ma => Error (msg "store not supported")
+  | BI_store_vec ma => Error (msg "store_vec not supported")
+  | BI_store_vec_lane vw ma li => Error (msg "store_vec_lane not supported")
+  | BI_memory_size => Error (msg "memory_size not supported")
+  | BI_memory_grow => Error (msg "memory_grow not supported")
+  | BI_memory_fill => Error (msg "memory_fill not supported")
+  | BI_memory_copy => Error (msg "memory_copy not supported")
+  | BI_memory_init idx => Error (msg "memory_init not supported")
+  | BI_data_drop idx => Error (msg "data_drop not supported")
+  | BI_nop => Error (msg "nop not supported")
+  | BI_unreachable => Error (msg "unreachable not supported")
+  | BI_block ty lbi => Error (msg "block not supported")
+  | BI_loop ty lbi => Error (msg "loop not supported")
+  | BI_if ty inst_true inst_false => Error (msg "if not supported")
+  | BI_br idx => Error (msg "br not supported")
+  | BI_br_if idx => Error (msg "br_if not supported")
+  | BI_br_table lidx idx => Error (msg "br_table not supported")
+  | BI_return => Error (msg "return not supported")
+  | BI_call idx => Error (msg "call not supported")
+  | BI_call_indirect tidx tyidx => Error (msg "call_indirect not supported")
+  | BI_return_call idx => Error (msg "return_call not supported")           
+  | BI_return_call_indirect tidx tyidx => Error (msg "return_call_indirect not supported")
   end.
 
 (** turn a list of Clight statements into a single statement using Ssequence *)
