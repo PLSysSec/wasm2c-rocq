@@ -9,14 +9,55 @@ Import Errors.
 Local Open Scope error_monad_scope.
 
 (* tag type *)
-Definition ident_of_func     (i : N) : AST.ident := ((N.succ_pos i)~0~0~0)%positive.
-Definition ident_of_global   (i : N) : AST.ident := ((N.succ_pos i)~0~0~1)%positive.
-Definition ident_of_local    (i : N) : AST.ident := ((N.succ_pos i)~0~1~0)%positive.
-Definition ident_of_i32_slot (i : N) : AST.ident := ((N.succ_pos i)~0~1~1)%positive.
-Definition ident_of_i64_slot (i : N) : AST.ident := ((N.succ_pos i)~1~0~0)%positive.
-Definition ident_of_f32_slot (i : N) : AST.ident := ((N.succ_pos i)~1~0~1)%positive.
-Definition ident_of_f64_slot (i : N) : AST.ident := ((N.succ_pos i)~1~1~0)%positive.
-Definition ident_of_ref_slot (i : N) : AST.ident := ((N.succ_pos i)~1~1~1)%positive.
+Definition ident_of_func      (i : N) : AST.ident := ((N.succ_pos i)~0~0~0~0)%positive.
+Definition ident_of_global    (i : N) : AST.ident := ((N.succ_pos i)~0~0~0~1)%positive.
+Definition ident_of_local     (i : N) : AST.ident := ((N.succ_pos i)~0~0~1~0)%positive.
+Definition ident_of_i32_slot  (i : N) : AST.ident := ((N.succ_pos i)~0~0~1~1)%positive.
+Definition ident_of_i64_slot  (i : N) : AST.ident := ((N.succ_pos i)~0~1~0~0)%positive.
+Definition ident_of_f32_slot  (i : N) : AST.ident := ((N.succ_pos i)~0~1~0~1)%positive.
+Definition ident_of_f64_slot  (i : N) : AST.ident := ((N.succ_pos i)~0~1~1~0)%positive.
+Definition ident_of_ref_slot  (i : N) : AST.ident := ((N.succ_pos i)~0~1~1~1)%positive.
+Definition ident_of_mem       (i : N) : AST.ident := ((N.succ_pos i)~1~0~0~0)%positive. (* think this is kinda unnecessary since only 1 mem allowed*)
+Definition ident_of_mem_field (i : N) : AST.ident := ((N.succ_pos i)~1~0~0~1)%positive.
+Definition ident_of_struct    (i : N) : AST.ident := ((N.succ_pos i)~1~0~1~0)%positive.
+
+Definition mem_struct_id : AST.ident := ident_of_struct 0.
+Definition tmem : Ctypes.type := Ctypes.Tstruct mem_struct_id Ctypes.noattr.
+Definition tmem_ptr : Ctypes.type := tptr tmem.
+
+Definition memfield_data      : AST.ident := ident_of_mem_field 0.
+Definition memfield_data_end  : AST.ident := ident_of_mem_field 1.
+Definition memfield_pages     : AST.ident := ident_of_mem_field 2.
+Definition memfield_min_pages : AST.ident := ident_of_mem_field 3.
+Definition memfield_max_pages : AST.ident := ident_of_mem_field 4.
+Definition memfield_size      : AST.ident := ident_of_mem_field 5.
+
+Definition mem_composite : Ctypes.composite_definition :=
+  Ctypes.Composite mem_struct_id Ctypes.Struct [
+    Ctypes.Member_plain memfield_data      (tptr tuchar);
+    Ctypes.Member_plain memfield_data_end  (tptr tuchar);
+    Ctypes.Member_plain memfield_pages     tulong;
+    Ctypes.Member_plain memfield_min_pages tulong;
+    Ctypes.Member_plain memfield_max_pages tulong;
+    Ctypes.Member_plain memfield_size      tulong
+  ] Ctypes.noattr.
+
+Definition composites : list Ctypes.composite_definition := [mem_composite].
+
+(* imported memory; nil means the memory is only declared, not defined *)
+Definition mem_extern : AST.globvar Ctypes.type :=
+  AST.mkglobvar tmem nil false false.
+
+(* defined memory *)
+Definition mem_def (ce : Ctypes.composite_env) : AST.globvar Ctypes.type :=
+  AST.mkglobvar tmem [AST.Init_space (Ctypes.sizeof ce tmem)] false false.
+
+Definition mem_var : Clight.expr := Clight.Evar (ident_of_mem 0) tmem.
+Definition mem_field (f : AST.ident) (ty : Ctypes.type) : Clight.expr :=
+  Clight.Efield (mem_var) f ty.
+Definition mem_data : Clight.expr := 
+  mem_field memfield_data (tptr tuchar).
+Definition mem_size : Clight.expr := mem_field memfield_size tulong.
 
 Definition wasm_type_to_clight_type (t : value_type) : res Ctypes.type :=
   match t with
@@ -300,9 +341,23 @@ Definition compile_func (m : module) (func : module_func)
   | None => Error (msg "function type couldn't be found in binary")
 end.
 
-(* turn a Wasm name into a string *)
+(** turn a Wasm name into a string *)
 Definition string_of_name (n : name) : String.string :=
   String.string_of_list_byte n.
+
+
+(** compile a list of Wasm imported memories into a list of Clight global 
+    variables *)
+Fixpoint compile_mem_import (imps : list module_import)
+  : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
+  match imps with
+  | nil => OK nil
+  | mem :: rest =>
+    match mem.(imp_desc) with
+    | MID_mem mem_ty => OK [(ident_of_mem 0, AST.Gvar mem_extern)]
+    | _ => compile_mem_import rest
+    end
+  end.
 
 (** compile a list of Wasm imported functions into a list of Clight external 
     functions. idx is the ident number to start at *)
@@ -332,6 +387,47 @@ Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
     end
   end.
 
+(** count the number of imported functions in a module *)
+Definition n_imported_functions (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_func _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of imported tables in a module *)
+Definition n_imported_tables (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_table _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of imported memories in a module *)
+Definition n_imported_memories (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_mem _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of imported globals in a module *)
+Definition n_imported_globals (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_global _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of defined memories in a module *)
+Definition n_defined_memories (m : module) : N :=
+  N.of_nat (List.length m.(mod_mems)).
+
+(** compile Wasm memories into Clight memories *)
+Definition compile_mem (m : module) (ce : Ctypes.composite_env)
+  : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
+  if N.ltb 1 (n_imported_memories m + n_defined_memories m) then
+    Error (msg "only one memory allowed in Wasm 1.0")
+  else
+    match m.(mod_mems) with
+    | nil => compile_mem_import m.(mod_imports)
+    | mem :: _ => 
+      OK ([(ident_of_mem 0, AST.Gvar (mem_def ce))]) 
+    end
+  .
+
 (** compile Wasm functions into Clight functions, assigning identifiers starting 
     from idx *)
 Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
@@ -344,12 +440,6 @@ Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
     OK ((ident_of_func idx, AST.Gfun (Ctypes.Internal cf)) :: rest')
   end.
 
-(** count the number of imported functions in a module *)
-Definition n_imported_functions (m : module) : N :=
-  N.of_nat (List.length (List.filter
-    (fun imp => match imp.(imp_desc) with MID_func _ => true | _ => false end)
-    m.(mod_imports))).
-
 (** compile the functions from a Wasm module into Clight *)
 Definition compile_funcs (m : module)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
@@ -360,6 +450,8 @@ Definition compile_funcs (m : module)
 (** Note: module defined in WasmCert-Coq/theories/datatypes.v:740; 
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)
 Definition compile (m : module) : Errors.res Clight.program :=
-  do imports <- compile_func_imports m 0 m.(mod_imports);
+  do ce       <- Ctypes.build_composite_env composites;
+  do fimports <- compile_func_imports m 0 m.(mod_imports);
+  do mglobals <- compile_mem m ce;
   do defs <- compile_funcs m;
-  Ctypes.make_program nil (imports ++ defs) nil 1%positive.
+  Ctypes.make_program composites (fimports ++ mglobals ++ defs) nil 1%positive.
