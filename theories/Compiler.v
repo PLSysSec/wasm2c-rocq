@@ -1,5 +1,5 @@
 From Wasm Require Import datatypes datatypes_properties operations numerics.
-From Stdlib Require Import PArith NArith String List.
+From Stdlib Require Import PArith NArith ZArith String List.
 From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
 
@@ -8,7 +8,7 @@ Import Errors.
 
 Local Open Scope error_monad_scope.
 
-(* tag type *)
+(* tags partition which Wasm index space the number came from *)
 Definition ident_of_func      (i : N) : AST.ident := ((N.succ_pos i)~0~0~0~0)%positive.
 Definition ident_of_global    (i : N) : AST.ident := ((N.succ_pos i)~0~0~0~1)%positive.
 Definition ident_of_local     (i : N) : AST.ident := ((N.succ_pos i)~0~0~1~0)%positive.
@@ -20,6 +20,12 @@ Definition ident_of_ref_slot  (i : N) : AST.ident := ((N.succ_pos i)~0~1~1~1)%po
 Definition ident_of_mem       (i : N) : AST.ident := ((N.succ_pos i)~1~0~0~0)%positive. (* think this is kinda unnecessary since only 1 mem allowed*)
 Definition ident_of_mem_field (i : N) : AST.ident := ((N.succ_pos i)~1~0~0~1)%positive.
 Definition ident_of_struct    (i : N) : AST.ident := ((N.succ_pos i)~1~0~1~0)%positive.
+Definition ident_of_runtime   (i : N) : AST.ident := ((N.succ_pos i)~1~0~1~1)%positive.
+Definition ident_of_data      (i : N) : AST.ident := ((N.succ_pos i)~1~1~0~0)%positive.
+
+Definition ident_calloc      : AST.ident := ident_of_runtime 0.
+Definition ident_instantiate : AST.ident := ident_of_runtime 1.
+
 
 Definition mem_struct_id : AST.ident := ident_of_struct 0.
 Definition tmem : Ctypes.type := Ctypes.Tstruct mem_struct_id Ctypes.noattr.
@@ -58,6 +64,111 @@ Definition mem_field (f : AST.ident) (ty : Ctypes.type) : Clight.expr :=
 Definition mem_data : Clight.expr := 
   mem_field memfield_data (tptr tuchar).
 Definition mem_size : Clight.expr := mem_field memfield_size tulong.
+
+(** turn a list of Clight statements into a single statement using Ssequence *)
+Definition seq_of_list (l : list Clight.statement) : Clight.statement :=
+  List.fold_right Clight.Ssequence Clight.Sskip l.
+
+Definition wasm_page_size : Z := (Z.of_nat 65536).
+Definition wasm_max_pages : N := 65536%N.
+
+Definition calloc_args : list Ctypes.type := [tulong; tulong].
+Definition calloc_ret : Ctypes.type := tptr tvoid.
+Definition tcalloc : Ctypes.type := 
+  Ctypes.Tfunction calloc_args calloc_ret AST.cc_default.
+
+(* using calloc instead of built in malloc because it zeroes memory *)
+Definition calloc_decl : AST.ident * AST.globdef Clight.fundef Ctypes.type :=
+  (ident_calloc,
+   AST.Gfun (Ctypes.External
+    (AST.EF_external "calloc"
+      (Ctypes.signature_of_type calloc_args calloc_ret AST.cc_default))
+    calloc_args calloc_ret AST.cc_default)).
+
+Definition const_u64 (z : Z) : Clight.expr :=
+  Clight.Econst_long (Integers.Int64.repr z) tulong.
+Definition set_mem_field (f : AST.ident) (ty : Ctypes.type) (e : Clight.expr)
+  : Clight.statement
+  := Clight.Sassign (mem_field f ty) e.
+
+
+Definition alloc_mem_stmts (min max : N) : list Clight.statement :=
+  let bytes := (Z.of_N min * wasm_page_size)%Z in
+  [ set_mem_field memfield_min_pages tulong (const_u64 (Z.of_N min));
+    set_mem_field memfield_max_pages tulong (const_u64 (Z.of_N max));
+    set_mem_field memfield_pages     tulong (const_u64 (Z.of_N min));
+    set_mem_field memfield_size      tulong (const_u64 bytes);
+    Clight.Scall (Some (ident_of_local 0))
+      (Clight.Evar ident_calloc tcalloc)
+      [const_u64 bytes; const_u64 1];
+    set_mem_field memfield_data (tptr tuchar)
+      (Clight.Ecast (Clight.Etempvar (ident_of_local 0) (tptr tvoid)) (tptr tuchar));
+    set_mem_field memfield_data_end (tptr tuchar)
+      (Clight.Ebinop Cop.Oadd mem_data (const_u64 bytes) (tptr tuchar))
+  ].
+
+Definition limits_of_mem (mem : module_mem) : N * N :=
+  let lim := mem.(modmem_type) in
+    (lim.(lim_min), match lim.(lim_max) with Some x => x | None => wasm_max_pages end).
+
+
+Definition data_globvar (bs : list byte) : AST.globvar Ctypes.type :=
+  AST.mkglobvar
+    (tarray tuchar (Z.of_nat (List.length bs)))
+    (List.map (fun b => AST.Init_int8 (Integers.Int.repr (wasmcompcert.libIntegers.Byte.unsigned b))) bs)
+    true false.
+
+Definition const_offset (e : expr) : res Z :=
+  match e with
+  | [BI_const_num (VAL_int32 k)] => OK (Wasm_int.Z_of_uint i32m k)
+  | _ => Error (msg "data segment offset must be a constant i32")
+  end.
+
+Definition copy_data (dst src : Clight.expr) (len : Z) : Clight.statement :=
+  Clight.Sbuiltin None (AST.EF_memcpy len 1) [tptr tvoid; tptr tvoid] [dst; src].
+
+Fixpoint compile_datas (idx : N) (ds : list module_data)
+  : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)
+         * list Clight.statement) :=
+  match ds with
+  | nil => OK (nil, nil)
+  | dat :: rest =>
+    match dat.(moddata_mode) with
+    | MD_passive => Error (msg "passive data segments not supported")
+    | MD_active midx ofs =>
+      if negb (N.eqb midx 0) then
+        Error (msg "non-zero memory index not supported")
+      else
+        do off <- const_offset ofs;
+        let bs    := dat.(moddata_init) in
+        let len   := Z.of_nat (List.length bs) in
+        let tdata := tarray tuchar len in
+        let id    := ident_of_data idx in 
+        let src   := Clight.Ecast
+                      (Clight.Eaddrof (Clight.Evar id tdata) (tptr tdata))
+                      (tptr tvoid) in
+        let dst   := Clight.Ecast
+                      (Clight.Ebinop Cop.Oadd mem_data (const_u64 off) (tptr tuchar))
+                      (tptr tvoid) in
+        do (gvs, stmts) <- compile_datas (N.succ idx) rest;
+        OK ((id, AST.Gvar (data_globvar bs)) :: gvs,
+            copy_data dst src len :: stmts)
+    end
+  end.
+
+Definition compile_instantiate (m : module)
+  : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
+  do alloc <- match m.(mod_mems) with
+              | nil      => OK nil
+              | mem :: _ => let (mn, mx) := limits_of_mem mem in
+                            OK (alloc_mem_stmts mn mx)
+              end;
+  do (data_defs, data_stmts) <- compile_datas 0 m.(mod_datas);
+  let f := Clight.mkfunction tvoid AST.cc_default nil nil
+           [(ident_of_local 0, tptr tvoid)]
+           (seq_of_list (alloc ++ data_stmts ++ [Clight.Sreturn None])) in
+  OK (data_defs ++ [(ident_instantiate, AST.Gfun (Ctypes.Internal f))]).
+
 
 Definition wasm_type_to_clight_type (t : value_type) : res Ctypes.type :=
   match t with
@@ -269,10 +380,6 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | BI_return_call_indirect tidx tyidx => Error (msg "return_call_indirect not supported")
   end.
 
-(** turn a list of Clight statements into a single statement using Ssequence *)
-Definition seq_of_list (l : list Clight.statement) : Clight.statement :=
-  List.fold_right Clight.Ssequence Clight.Sskip l.
-
 (** turn a list of Wasm instructions into a list of Clight statements*)
 Fixpoint instrs_to_statements 
   (cs : compiler_state) 
@@ -453,5 +560,8 @@ Definition compile (m : module) : Errors.res Clight.program :=
   do ce       <- Ctypes.build_composite_env composites;
   do fimports <- compile_func_imports m 0 m.(mod_imports);
   do mglobals <- compile_mem m ce;
+  do inst     <- compile_instantiate m;
   do defs <- compile_funcs m;
-  Ctypes.make_program composites (fimports ++ mglobals ++ defs) nil 1%positive.
+  Ctypes.make_program composites 
+    (calloc_decl :: fimports ++ mglobals ++ inst ++ defs)
+    [ident_instantiate] 1%positive.
