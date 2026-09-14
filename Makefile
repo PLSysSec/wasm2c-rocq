@@ -1,5 +1,8 @@
 extract: clean
-	rm compiler/wasm2c && \
+	rm -f compiler/wasm2c && \
+	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Util.v && \
+	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Ident.v && \
+	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Memory.v && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Compiler.v && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c compiler/Extraction.v && \
 	cd compiler && ocamlfind ocamlopt -w -a compiler.mli compiler.ml driver.ml -o wasm2c && cd ..

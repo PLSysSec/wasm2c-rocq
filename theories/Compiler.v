@@ -1,22 +1,13 @@
 From Wasm Require Import datatypes datatypes_properties operations numerics.
-From Stdlib Require Import PArith NArith String List.
+From Stdlib Require Import PArith NArith ZArith String List.
 From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
+From Wasm2c Require Import Util Ident Memory.
 
 Import ListNotations.
 Import Errors.
 
 Local Open Scope error_monad_scope.
-
-(* tag type *)
-Definition ident_of_func     (i : N) : AST.ident := ((N.succ_pos i)~0~0~0)%positive.
-Definition ident_of_global   (i : N) : AST.ident := ((N.succ_pos i)~0~0~1)%positive.
-Definition ident_of_local    (i : N) : AST.ident := ((N.succ_pos i)~0~1~0)%positive.
-Definition ident_of_i32_slot (i : N) : AST.ident := ((N.succ_pos i)~0~1~1)%positive.
-Definition ident_of_i64_slot (i : N) : AST.ident := ((N.succ_pos i)~1~0~0)%positive.
-Definition ident_of_f32_slot (i : N) : AST.ident := ((N.succ_pos i)~1~0~1)%positive.
-Definition ident_of_f64_slot (i : N) : AST.ident := ((N.succ_pos i)~1~1~0)%positive.
-Definition ident_of_ref_slot (i : N) : AST.ident := ((N.succ_pos i)~1~1~1)%positive.
 
 Definition wasm_type_to_clight_type (t : value_type) : res Ctypes.type :=
   match t with
@@ -228,10 +219,6 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | BI_return_call_indirect tidx tyidx => Error (msg "return_call_indirect not supported")
   end.
 
-(** turn a list of Clight statements into a single statement using Ssequence *)
-Definition seq_of_list (l : list Clight.statement) : Clight.statement :=
-  List.fold_right Clight.Ssequence Clight.Sskip l.
-
 (** turn a list of Wasm instructions into a list of Clight statements*)
 Fixpoint instrs_to_statements 
   (cs : compiler_state) 
@@ -300,10 +287,6 @@ Definition compile_func (m : module) (func : module_func)
   | None => Error (msg "function type couldn't be found in binary")
 end.
 
-(* turn a Wasm name into a string *)
-Definition string_of_name (n : name) : String.string :=
-  String.string_of_list_byte n.
-
 (** compile a list of Wasm imported functions into a list of Clight external 
     functions. idx is the ident number to start at *)
 Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
@@ -344,22 +327,23 @@ Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
     OK ((ident_of_func idx, AST.Gfun (Ctypes.Internal cf)) :: rest')
   end.
 
-(** count the number of imported functions in a module *)
-Definition n_imported_functions (m : module) : N :=
-  N.of_nat (List.length (List.filter
-    (fun imp => match imp.(imp_desc) with MID_func _ => true | _ => false end)
-    m.(mod_imports))).
-
 (** compile the functions from a Wasm module into Clight *)
 Definition compile_funcs (m : module)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
   (* start internal functions after the external calls *)
   compile_funcs_from m (n_imported_functions m) m.(mod_funcs).
 
+(** structs *)
+Definition composites : list Ctypes.composite_definition := [mem_composite].
 
 (** Note: module defined in WasmCert-Coq/theories/datatypes.v:740; 
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)
 Definition compile (m : module) : Errors.res Clight.program :=
-  do imports <- compile_func_imports m 0 m.(mod_imports);
+  do ce       <- Ctypes.build_composite_env composites;
+  do fimports <- compile_func_imports m 0 m.(mod_imports);
+  do mglobals <- compile_mem m ce;
+  do inst     <- compile_instantiate m;
   do defs <- compile_funcs m;
-  Ctypes.make_program nil (imports ++ defs) nil 1%positive.
+  Ctypes.make_program composites 
+    (calloc_decl :: fimports ++ mglobals ++ inst ++ defs)
+    [ident_instantiate] 1%positive.
