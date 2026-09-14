@@ -1,0 +1,45 @@
+From Wasm Require Import datatypes.
+From Stdlib Require Import NArith String List.
+From compcert Require cfrontend.Clight.
+From compcert Require Import export.Ctypesdefs.
+
+(** count the number of imported functions in a module *)
+Definition n_imported_functions (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_func _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of imported tables in a module *)
+Definition n_imported_tables (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_table _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of imported memories in a module *)
+Definition n_imported_memories (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_mem _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of imported globals in a module *)
+Definition n_imported_globals (m : module) : N :=
+  N.of_nat (List.length (List.filter
+    (fun imp => match imp.(imp_desc) with MID_global _ => true | _ => false end)
+    m.(mod_imports))).
+
+(** count the number of defined memories in a module *)
+Definition n_defined_memories (m : module) : N :=
+  N.of_nat (List.length m.(mod_mems)).
+
+(** turn a Wasm name into a string *)
+Definition string_of_name (n : name) : String.string :=
+  String.string_of_list_byte n.
+
+(** turn Z into long expr *)
+(* weird that this is u64 and using int64 *)
+Definition const_u64 (z : Z) : Clight.expr :=
+  Clight.Econst_long (Integers.Int64.repr z) tulong.
+
+(** turn a list of Clight statements into a single statement using Ssequence *)
+Definition seq_of_list (l : list Clight.statement) : Clight.statement :=
+  List.fold_right Clight.Ssequence Clight.Sskip l.
