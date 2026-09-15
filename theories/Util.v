@@ -1,5 +1,5 @@
 From Wasm Require Import datatypes.
-From Stdlib Require Import NArith String List.
+From Stdlib Require Import ZArith NArith String List.
 From compcert Require cfrontend.Clight.
 From compcert Require Import export.Ctypesdefs.
 
@@ -35,10 +35,9 @@ Definition n_defined_memories (m : module) : N :=
 Definition string_of_name (n : name) : String.string :=
   String.string_of_list_byte n.
 
-(** turn Z into long expr *)
-(* weird that this is u64 and using int64 *)
-Definition const_u64 (z : Z) : Clight.expr :=
-  Clight.Econst_long (Integers.Int64.repr z) tulong.
+(** turn Z into const long expr -- unsignedness represented bc it's a tulong *)
+Definition const_u64 (n : N) : Clight.expr :=
+  Clight.Econst_long (Integers.Int64.repr (Z.of_N n)) tulong.
 
 (** turn a list of Clight statements into a single statement using Ssequence *)
 Definition seq_of_list (l : list Clight.statement) : Clight.statement :=

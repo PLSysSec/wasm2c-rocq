@@ -2,6 +2,7 @@ extract: clean
 	rm -f compiler/wasm2c && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Util.v && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Ident.v && \
+	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Instantiate.v && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Memory.v && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c theories/Compiler.v && \
 	rocq c -R /home/opam/.local/lib/compcert/coq compcert -R theories Wasm2c compiler/Extraction.v && \
