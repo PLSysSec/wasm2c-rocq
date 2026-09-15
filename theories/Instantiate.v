@@ -15,7 +15,7 @@ Definition tinst_ptr : Ctypes.type := tptr tinst.
 
 Definition mem_struct_id : AST.ident := ident_of_struct 1.
 Definition tmem : Ctypes.type := Ctypes.Tstruct mem_struct_id Ctypes.noattr.
-Definition tmem_ptr : Ctypes.type : tptr tmem.
+Definition tmem_ptr : Ctypes.type := tptr tmem.
 
 Definition mem_data      : AST.ident := ident_of_inst_field 0.
 Definition mem_pages     : AST.ident := ident_of_inst_field 1.
@@ -59,11 +59,8 @@ Definition inst_field_type (f : AST.ident) : res Ctypes.type :=
   if Pos.eqb f inst_globals   then OK (tptr (tptr tvoid)) else
   Error (msg "invalid instance field").
 
-(* how do idents for params/local vars work? *)
-Definition inst_param : AST.ident := ident_of_inst 0.
-
 (** pointer reference to the instance *)
-Definition inst_ptr : Clight.expr := Clight.Etempvar inst_param tinst_ptr.
+Definition inst_ptr : Clight.expr := Clight.Etempvar ident_inst tinst_ptr.
 
 (** get a reference to an instance field *)
 Definition inst_field (f : AST.ident) (ty : Ctypes.type) : Clight.expr :=
@@ -101,56 +98,35 @@ Definition calloc_decl : AST.ident * AST.globdef Clight.fundef Ctypes.type :=
 Definition wasm_page_size : N := 65536%N.
 Definition wasm_max_pages : N := 65536%N.
 
-(* * extract the limits from
-Fixpoint get_imported_memory (imps : list module_import) : option (N * N) :=
-  match imps with
-  | nil         => None
-  | imp :: rest =>
-    match imp.(imp_desc) with
-    | MID_mem mem_ty =>
-      match mem_ty.lim_max with
-      | Some n => Some (mem_ty.lim_min, n)
-      | None   => Some (mem_ty.lim_min, wasm_max_pages)
-      end
-    | _ => get_imported_memory rest
-    end
-  end.
-
-Definition extract_memory (m : module) : Some (N * N) :=
-  match get *)
-
 Definition alloc_def_mem_stmts (min max : N) : res (list Clight.statement) :=
   let num_bytes := (min * wasm_page_size)%N in
-  do i1 <- set_mem_field mem_min_pages (const_u64 min);
-  do i2 <- set_mem_field mem_max_pages (const_u64 max);
-  do i3 <- set_mem_field mem_pages     (const_u64 max);
-  do i4 <- set_mem_field mem_size      (const_u64 num_bytes);
-  (* ident_of_local 0 is the first local available in the instantiate 
-     function, need to make sure we don't collide *)
-  let i5 := Clight.Scall (Some (ident_of_local 0))
-    (Clight.Evar ident_calloc tcalloc)
-    [const_u64 num_bytes; const_u64 1]
-  in
-  (* TODO: check the return value of calloc -- if it returns NULL, need to 
-      set the trap flag *)
-  let ptr_cast := Clight.Ecast 
-    (Clight.Etempvar (ident_of_local 0) (tptr tvoid))
-    (tptr tuchar)
-  in
-  do i6 <- set_mem_field mem_data ptr_cast;
-  OK [i1; i2; i3; i4; i5; i6].
+  let mem_tmp   := ident_of_local 0 in
+  let data_tmp  := ident_of_local 1 in
+  (* TODO: check return value of calloc *)
+  (* local0 = calloc(1, sizeof(struct wasm_memory)) *)
+  let i0 := Clight.Scall (Some mem_tmp)
+              (Clight.Evar ident_calloc tcalloc)
+              [const_u64 1; Clight.Esizeof tmem tulong] in
+  let mem_cast := 
+    Clight.Ecast (Clight.Etempvar mem_tmp (tptr tvoid)) tmem_ptr in
+  (* inst->mem = (struct wasm_memory* ) local0 *)
+  do i1 <- set_inst_field inst_mem mem_cast;
+  do i2 <- set_mem_field mem_min_pages (const_u64 min);
+  do i3 <- set_mem_field mem_max_pages (const_u64 max);
+  do i4 <- set_mem_field mem_pages     (const_u64 min);
+  do i5 <- set_mem_field mem_size      (const_u64 num_bytes);
+  (* TODO: check return value of calloc *)
+  (* local1 = calloc(num_bytes, 1) *)
+  let i6 := Clight.Scall (Some data_tmp)
+              (Clight.Evar ident_calloc tcalloc)
+              [const_u64 num_bytes; const_u64 1] in
+  let data_cast := Clight.Ecast
+    (Clight.Etempvar data_tmp (tptr tvoid)) (tptr tuchar) in
+  do i7 <- set_mem_field mem_data data_cast;
+  OK [i0; i1; i2; i3; i4; i5; i6; i7].
 
-
-(* Definition alloc_imp_mem_stmts () *)
-
-Definition alloc_imp_mem_stmts (min max : N) : res (list Clight.statement) :=
-  let num_bytes := (min * wasm_page_size)%N in
-  do i1 <- set_inst_field inst_min_pages (const_u64 min);
-  do i2 <- set_inst_field inst_max_pages (const_u64 max);
-  do i3 <- set_inst_field inst_pages     (const_u64 min);
-  do i4 <- set_inst_field inst_size      (const_u64 num_bytes);
-  (* set inst_data to the imported memory global somehow *)
-  OK [i1; i2; i3; i4; i5].
+(* Definition alloc_imp_mem_stmts (min max : N) : res (list Clight.statement).
+Admitted. *)
 
 (** returns a Clight statement to copy Z bytes of data from src to dst *)
 Definition copy_data (dst src : Clight.expr) (len : Z) : Clight.statement :=
@@ -192,10 +168,12 @@ Fixpoint compile_datas (idx : N) (ds : list module_data)
         let src   := Clight.Ecast
                       (Clight.Eaddrof (Clight.Evar id tdata) (tptr tdata))      
                       (tptr tvoid) in
+        (* TODO: need a bounds check here, or datas will be able to write past 
+           the end of memory *)
         let dst   :=
           Clight.Ecast
-            (Clight.Ebinop Cop.Oadd
-               (inst_field inst_data (tptr tuchar))
+            (Clight.Ebinop Cop.Oadd (* adding directly to pointer seems sus *)
+               (mem_field mem_data (tptr tuchar))
                (const_u64 (Z.to_N off))
                (tptr tuchar))
             (tptr tvoid) in
@@ -216,14 +194,15 @@ Definition compile_instantiate (m : module)
   do alloc <- match m.(mod_mems) with
               | nil      => OK nil
               | mem :: _ => let (mn, mx) := limits_of_mem mem in
-                            alloc_mem_stmts mn mx
+                            alloc_def_mem_stmts mn mx
               end;
   do (data_defs, data_stmts) <- compile_datas 0 m.(mod_datas);
   let body := seq_of_list (alloc ++ data_stmts ++ [Clight.Sreturn None]) in
   let f := Clight.mkfunction
              tvoid AST.cc_default
-             [(inst_param, tinst_ptr)]        (* params *)
-             nil                              (* vars *)
-             [(ident_of_local 0, tptr tvoid)] (* temps *)
+             [(ident_inst, tinst_ptr)]     (* params *)
+             nil                              (* vars   *)
+             [(ident_of_local 0, tptr tvoid); (* temps  *)
+              (ident_of_local 1, tptr tvoid)]
              body in
   OK (data_defs ++ [(ident_instantiate, AST.Gfun (Ctypes.Internal f))]).

@@ -40,10 +40,11 @@ Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type)
                 OK (((ident_of_local base), ty) :: rest)
   end.
 
-(** parameters start at identifier 0 *)
+(** normal parameters + Wasm instance pointer *)
 Definition wasm_params_to_clight_params (ts : list value_type) 
   : res (list (AST.ident * Ctypes.type)) :=
-  wasm_vars_to_clight_vars 0 ts.
+  do params <- wasm_vars_to_clight_vars 0 ts;
+  OK ((ident_inst, tinst_ptr) :: params).
 
 (** convert Wasm return type into Clight return type *)
 Definition wasm_return_to_clight_return (ts : list value_type) 
@@ -187,9 +188,9 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | BI_table_fill idx => Error (msg "table_fill not supported")
   | BI_table_copy idx1 idx2 => Error (msg "table_copy not supported")
   | BI_table_init tidx eidx => Error (msg "table_init not supported")
+  | BI_elem_drop idx => Error (msg "elem_drop not supported")
 
   (* linear memory instrs *)
-  | BI_elem_drop idx => Error (msg "elem_drop not supported")
   | BI_load ty opt_ty_sx arg => Error (msg "load not supported")
   | BI_load_vec varg marg => Error (msg "load_vec not supported")
   | BI_load_vec_lane vw ma li => Error (msg "load_vec_lane not supported")
@@ -282,7 +283,7 @@ Definition compile_func (m : module) (func : module_func)
       slot_temps ident_of_ref_slot (tptr tvoid) cs.(max_depth)
     ) in
       OK (
-        Clight.mkfunction ret_type AST.cc_default params nil (params ++ locals ++ stack_temps) body
+        Clight.mkfunction ret_type AST.cc_default params nil (locals ++ stack_temps) body
       )
   | None => Error (msg "function type couldn't be found in binary")
 end.
@@ -330,7 +331,7 @@ Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
 (** compile the functions from a Wasm module into Clight *)
 Definition compile_funcs (m : module)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
-  (* start internal functions after the external calls *)
+  (* start internal functions after imported functions *)
   compile_funcs_from m (n_imported_functions m) m.(mod_funcs).
 
 (** structs *)
@@ -342,9 +343,8 @@ Definition composites : list Ctypes.composite_definition :=
 Definition compile (m : module) : Errors.res Clight.program :=
   do ce       <- Ctypes.build_composite_env composites;
   do fimports <- compile_func_imports m 0 m.(mod_imports);
-  do mglobals <- compile_mem m ce;
   do inst     <- compile_instantiate m;
-  do defs <- compile_funcs m;
+  do defs     <- compile_funcs m;
   Ctypes.make_program composites 
-    (calloc_decl :: fimports ++ mglobals ++ inst ++ defs)
+    (calloc_decl :: fimports ++ inst ++ defs)
     [ident_instantiate] 1%positive.

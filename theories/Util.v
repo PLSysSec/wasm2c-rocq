@@ -2,6 +2,9 @@ From Wasm Require Import datatypes.
 From Stdlib Require Import ZArith NArith String List.
 From compcert Require cfrontend.Clight.
 From compcert Require Import export.Ctypesdefs.
+From compcert Require common.Errors.
+Import Errors.
+Local Open Scope error_monad_scope.
 
 (** count the number of imported functions in a module *)
 Definition n_imported_functions (m : module) : N :=
