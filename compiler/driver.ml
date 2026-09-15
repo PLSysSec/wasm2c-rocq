@@ -11,7 +11,9 @@ let extern_names : (int, string) Hashtbl.t = Hashtbl.create 16
 (* libc functions whose prototypes come from the #includes below *)
 let libc_functions = ["calloc"; "malloc"; "free"; "memcpy"]
 
-let mem_field_names = [| "data"; "data_end"; "pages"; "min_pages"; "max_pages"; "size" |]
+let field_names =
+  [| "data"; "pages"; "min_pages"; "max_pages"; "size";
+     "mem"; "trapflag"; "globals" |]
 
 (* decode the 4-bit namespace tag back into a readable name *)
 let name_of_ident id =
@@ -25,10 +27,12 @@ match n land 15 with
 | 2 -> Printf.sprintf "l%d" idx       | 3 -> Printf.sprintf "s_i32_%d" idx
 | 4 -> Printf.sprintf "s_i64_%d" idx  | 5 -> Printf.sprintf "s_f32_%d" idx
 | 6 -> Printf.sprintf "s_f64_%d" idx  | 7 -> Printf.sprintf "s_ref_%d" idx
-| 8 -> Printf.sprintf "mem%d" idx
-| 9 when idx < Array.length mem_field_names -> mem_field_names.(idx)
+| 8 when idx = 0 -> "inst"
+| 8 -> Printf.sprintf "inst%d" idx
+| 9 when idx < Array.length field_names -> field_names.(idx)
 | 9 -> Printf.sprintf "field%d" idx
-| 10 when idx = 0 -> "wasm_memory"
+| 10 when idx = 0 -> "wasm_instance"
+| 10 when idx = 1 -> "wasm_memory"
 | 10 -> Printf.sprintf "struct%d" idx
 | 11 when idx = 1 -> "wasm_instantiate"
 | 11 -> Printf.sprintf "rt%d" idx
@@ -83,7 +87,9 @@ let rec string_of_expr = function
 | Ebinop (op, a, b, _) ->
     Printf.sprintf "(%s %s %s)" (string_of_expr a) (string_of_binop op) (string_of_expr b)
 | Ecast (e, t) -> Printf.sprintf "((%s)%s)" (string_of_type t) (string_of_expr e)
-| Efield (e, f, _) -> Printf.sprintf "%s.%s" (string_of_expr e) (name_of_ident f)
+| Efield (Ederef (e, _), f, _) ->
+    Printf.sprintf "%s->%s" (string_of_expr e) (name_of_ident f)
+| Efield (e, f, _) ->Printf.sprintf "%s.%s" (string_of_expr e) (name_of_ident f)
 | Esizeof (t, _) -> Printf.sprintf "sizeof(%s)" (string_of_type t)
 | Ealignof (t, _) -> Printf.sprintf "_Alignof(%s)" (string_of_type t)
 
@@ -102,6 +108,15 @@ match s with
     Printf.bprintf buf "%s%s = %s;\n" pad (name_of_ident id) (string_of_call f args)
 | Sbuiltin (None, EF_memcpy (sz, _), _, [dst; src]) ->
     Printf.bprintf buf "%smemcpy(%s, %s, %d);\n" pad (string_of_expr dst) (string_of_expr src) (int_of_z sz)
+| Sifthenelse (c, a, b) ->
+    Printf.bprintf buf "%sif (%s) {\n" pad (string_of_expr c);
+    pp_stmt buf (ind + 2) a;
+    (match b with
+     | Sskip -> Printf.bprintf buf "%s}\n" pad
+     | _ ->
+       Printf.bprintf buf "%s} else {\n" pad;
+       pp_stmt buf (ind + 2) b;
+       Printf.bprintf buf "%s}\n" pad)
 | Sreturn None -> Printf.bprintf buf "%sreturn;\n" pad
 | Sreturn (Some e) -> Printf.bprintf buf "%sreturn %s;\n" pad (string_of_expr e)
 | _ -> Printf.bprintf buf "%s/* unsupported statement */\n" pad

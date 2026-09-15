@@ -9,26 +9,6 @@ Import Errors.
 
 Local Open Scope error_monad_scope.
 
-Definition wasm_type_to_clight_type (t : value_type) : res Ctypes.type :=
-  match t with
-  | T_num T_i32  => OK tuint        (* always 32 bits *)
-  | T_num T_i64  => OK tulong       (* always 64 bits *)
-  | T_num T_f32  => OK tfloat
-  | T_num T_f64  => OK tdouble
-  | T_ref _      => OK (tptr tvoid) (* don't care if it's a funcref or extern ref *)
-  | T_vec T_v128 => Error (msg "No Clight equivalent for T_vec T_v128") 
-  | T_bot        => Error (msg "No Clight equivalent for T_bot")
-  end.
-
-Fixpoint wasm_types_to_clight_types (ts : list value_type) 
-  : res (list Ctypes.type) :=
-  match ts with
-  | nil => OK nil
-  | t :: rest => do t' <- wasm_type_to_clight_type t;
-                 do rest' <- wasm_types_to_clight_types rest;
-                 OK (t' :: rest')
-  end.
-
 (** turn a list of Wasm variables into a list of Clight variables. base is the 
     first fresh identifier *)
 Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type) 
@@ -61,8 +41,7 @@ Definition clight_of_functype (tf : function_type)
   let 'Tf ts1 ts2 := tf in
     do ret <- wasm_return_to_clight_return ts2;
     do ps <- wasm_params_to_clight_params ts1;
-    OK (ret, ps)
-  .
+    OK (ret, ps).
 
 (** compiler state records the current stack and the max depth of the stack *)
 Record compiler_state : Type := {
