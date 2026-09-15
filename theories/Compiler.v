@@ -2,7 +2,7 @@ From Wasm Require Import datatypes datatypes_properties operations numerics.
 From Stdlib Require Import PArith NArith ZArith String List.
 From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
-From Wasm2c Require Import Util Ident Memory.
+From Wasm2c Require Import Util Ident Memory Instantiate.
 
 Import ListNotations.
 Import Errors.
@@ -334,7 +334,8 @@ Definition compile_funcs (m : module)
   compile_funcs_from m (n_imported_functions m) m.(mod_funcs).
 
 (** structs *)
-Definition composites : list Ctypes.composite_definition := [mem_composite].
+Definition composites : list Ctypes.composite_definition := 
+  [mem_composite; inst_composite].
 
 (** Note: module defined in WasmCert-Coq/theories/datatypes.v:740; 
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)
