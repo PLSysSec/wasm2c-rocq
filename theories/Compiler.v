@@ -132,18 +132,18 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | BI_elem_drop idx => Error (msg "elem_drop not supported")
 
   (* linear memory instrs *)
-  | BI_load ty opt_ty_sx arg => Error (msg "load not supported")
-  | BI_load_vec varg marg => Error (msg "load_vec not supported")
-  | BI_load_vec_lane vw ma li => Error (msg "load_vec_lane not supported")
-  | BI_store nt opt ma => Error (msg "store not supported")
-  | BI_store_vec ma => Error (msg "store_vec not supported")
-  | BI_store_vec_lane vw ma li => Error (msg "store_vec_lane not supported")
-  | BI_memory_size => Error (msg "memory_size not supported")
-  | BI_memory_grow => Error (msg "memory_grow not supported")
-  | BI_memory_fill => Error (msg "memory_fill not supported")
-  | BI_memory_copy => Error (msg "memory_copy not supported")
-  | BI_memory_init idx => Error (msg "memory_init not supported")
-  | BI_data_drop idx => Error (msg "data_drop not supported")
+  | BI_load _ _ _           => compile_mem_instr cs instr
+  | BI_load_vec _ _         => compile_mem_instr cs instr
+  | BI_load_vec_lane _ _ _  => compile_mem_instr cs instr
+  | BI_store _ _ _          => compile_mem_instr cs instr
+  | BI_store_vec _          => compile_mem_instr cs instr
+  | BI_store_vec_lane _ _ _ => compile_mem_instr cs instr
+  | BI_memory_size          => compile_mem_instr cs instr
+  | BI_memory_grow          => compile_mem_instr cs instr
+  | BI_memory_fill          => compile_mem_instr cs instr
+  | BI_memory_copy          => compile_mem_instr cs instr
+  | BI_memory_init _        => compile_mem_instr cs instr
+  | BI_data_drop _          => compile_mem_instr cs instr
 
   (* control flow *)
   | BI_nop => Error (msg "nop not supported")
@@ -282,16 +282,16 @@ Definition compile_funcs (m : module)
   compile_funcs_from m (n_imported_functions m) m.(mod_funcs).
 
 (** structs *)
-Definition composites : list Ctypes.composite_definition := 
+Definition composites : list Ctypes.composite_definition :=
   [mem_composite; inst_composite].
 
-(** Note: module defined in WasmCert-Coq/theories/datatypes.v:740; 
+(** Note: module defined in WasmCert-Coq/theories/datatypes.v:740;
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)
 Definition compile (m : module) : Errors.res Clight.program :=
   do ce       <- Ctypes.build_composite_env composites;
   do fimports <- compile_func_imports m 0 m.(mod_imports);
   do inst     <- compile_instantiate m;
   do defs     <- compile_funcs m;
-  Ctypes.make_program composites 
-    (calloc_decl :: fimports ++ inst ++ defs)
+  Ctypes.make_program composites
+    (trap_decl :: calloc_decl :: fimports ++ inst ++ defs)
     [ident_instantiate] 1%positive.

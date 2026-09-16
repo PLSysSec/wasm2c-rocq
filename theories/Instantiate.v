@@ -38,8 +38,8 @@ Definition mem_composite : Ctypes.composite_definition :=
 
 Definition inst_composite : Ctypes.composite_definition :=
   Ctypes.Composite inst_struct_id Ctypes.Struct [
-    Ctypes.Member_plain inst_mem      tmem_ptr; 
-    Ctypes.Member_plain inst_trapflag (tptr tuint);
+    Ctypes.Member_plain inst_mem      tmem_ptr;
+    Ctypes.Member_plain inst_trapflag tuint;
     Ctypes.Member_plain inst_globals  (tptr (tptr tvoid))
   ] Ctypes.noattr.
 
@@ -54,8 +54,8 @@ Definition mem_field_type (f : AST.ident) : res Ctypes.type :=
 
 (** look up type of instance field *)
 Definition inst_field_type (f : AST.ident) : res Ctypes.type :=
-  if Pos.eqb f inst_mem       then OK tmem_ptr            else 
-  if Pos.eqb f inst_trapflag  then OK (tptr tuint)        else
+  if Pos.eqb f inst_mem       then OK tmem_ptr            else
+  if Pos.eqb f inst_trapflag  then OK tuint               else
   if Pos.eqb f inst_globals   then OK (tptr (tptr tvoid)) else
   Error (msg "invalid instance field").
 
@@ -71,7 +71,7 @@ Definition mem_field (f : AST.ident) (ty : Ctypes.type) : Clight.expr :=
   Clight.Efield (Clight.Ederef (inst_field inst_mem tmem_ptr) tmem) f ty.
 
 (** set instance field to a value *)
-Definition set_inst_field (f : AST.ident) (e : Clight.expr) 
+Definition set_inst_field (f : AST.ident) (e : Clight.expr)
   : res Clight.statement :=
   do ty <- inst_field_type f;
   OK (Clight.Sassign (inst_field f ty) e).
@@ -84,7 +84,7 @@ Definition set_mem_field (f : AST.ident) (e : Clight.expr)
 
 Definition calloc_args : list Ctypes.type := [tulong; tulong].
 Definition calloc_ret : Ctypes.type := tptr tvoid.
-Definition tcalloc : Ctypes.type := 
+Definition tcalloc : Ctypes.type :=
   Ctypes.Tfunction calloc_args calloc_ret AST.cc_default.
 
 (* using calloc instead of built in malloc because it zeroes memory *)
@@ -107,7 +107,7 @@ Definition alloc_def_mem_stmts (min max : N) : res (list Clight.statement) :=
   let i0 := Clight.Scall (Some mem_tmp)
               (Clight.Evar ident_calloc tcalloc)
               [const_u64 1; Clight.Esizeof tmem tulong] in
-  let mem_cast := 
+  let mem_cast :=
     Clight.Ecast (Clight.Etempvar mem_tmp (tptr tvoid)) tmem_ptr in
   (* inst->mem = (struct wasm_memory* ) local0 *)
   do i1 <- set_inst_field inst_mem mem_cast;
@@ -130,6 +130,7 @@ Admitted. *)
 
 (** returns a Clight statement to copy Z bytes of data from src to dst *)
 Definition copy_data (dst src : Clight.expr) (len : Z) : Clight.statement :=
+  (* 1-byte alignment so we don't have to worry alignment *)
   Clight.Sbuiltin None (AST.EF_memcpy len 1) [tptr tvoid; tptr tvoid] [dst; src].
 
 (** turn list of Wasm bytes into Clight array *)
@@ -146,7 +147,7 @@ Definition const_segment_offset (e : expr) : res Z :=
   | _ => Error (msg "data segment offset must be a constant i32")
   end.
 
-(** compile data segments into a list of global variables and the statements to 
+(** compile data segments into a list of global variables and the statements to
     instantiate them *)
 Fixpoint compile_datas (idx : N) (ds : list module_data)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)
@@ -164,11 +165,11 @@ Fixpoint compile_datas (idx : N) (ds : list module_data)
         let bs    := dat.(moddata_init) in
         let len   := Z.of_nat (List.length bs) in
         let tdata := tarray tuchar len in
-        let id    := ident_of_data idx in 
+        let id    := ident_of_data idx in
         let src   := Clight.Ecast
-                      (Clight.Eaddrof (Clight.Evar id tdata) (tptr tdata))      
+                      (Clight.Eaddrof (Clight.Evar id tdata) (tptr tdata))
                       (tptr tvoid) in
-        (* TODO: need a bounds check here, or datas will be able to write past 
+        (* TODO: need a bounds check here, or datas will be able to write past
            the end of memory *)
         let dst   :=
           Clight.Ecast
@@ -183,6 +184,11 @@ Fixpoint compile_datas (idx : N) (ds : list module_data)
     end
   end.
 
+Definition init_trapflag_statements : res (list Clight.statement) :=
+  let zero := Clight.Econst_int Integers.Int.zero tuint in
+  do i0 <- set_inst_field inst_trapflag zero;
+  OK [ i0 ].
+
 (** extract min and max pages from a Wasm memory *)
 Definition limits_of_mem (mem : module_mem) : N * N :=
   let lim := mem.(modmem_type) in
@@ -191,16 +197,22 @@ Definition limits_of_mem (mem : module_mem) : N * N :=
 (** construct the instance instantiation function *)
 Definition compile_instantiate (m : module)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
-  do alloc <- match m.(mod_mems) with
-              | nil      => OK nil
-              | mem :: _ => let (mn, mx) := limits_of_mem mem in
-                            alloc_def_mem_stmts mn mx
-              end;
+  do mem_alloc <- match m.(mod_mems) with
+                  | nil      => OK nil
+                  | mem :: _ => let (mn, mx) := limits_of_mem mem in
+                                alloc_def_mem_stmts mn mx
+                  end;
+  do trapflag_init <- init_trapflag_statements;
   do (data_defs, data_stmts) <- compile_datas 0 m.(mod_datas);
-  let body := seq_of_list (alloc ++ data_stmts ++ [Clight.Sreturn None]) in
+  let body := seq_of_list (
+    trapflag_init ++
+    mem_alloc ++
+    data_stmts ++
+    [Clight.Sreturn None]
+  ) in
   let f := Clight.mkfunction
              tvoid AST.cc_default
-             [(ident_inst, tinst_ptr)]     (* params *)
+             [(ident_inst, tinst_ptr)]        (* params *)
              nil                              (* vars   *)
              [(ident_of_local 0, tptr tvoid); (* temps  *)
               (ident_of_local 1, tptr tvoid)]

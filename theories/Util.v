@@ -53,11 +53,11 @@ Definition wasm_type_to_clight_type (t : value_type) : res Ctypes.type :=
   | T_num T_f32  => OK tfloat
   | T_num T_f64  => OK tdouble
   | T_ref _      => OK (tptr tvoid) (* don't care if it's a funcref or extern ref *)
-  | T_vec T_v128 => Error (msg "No Clight equivalent for T_vec T_v128") 
+  | T_vec T_v128 => Error (msg "No Clight equivalent for T_vec T_v128")
   | T_bot        => Error (msg "No Clight equivalent for T_bot")
   end.
 
-Fixpoint wasm_types_to_clight_types (ts : list value_type) 
+Fixpoint wasm_types_to_clight_types (ts : list value_type)
   : res (list Ctypes.type) :=
   match ts with
   | nil => OK nil
