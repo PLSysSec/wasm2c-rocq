@@ -4,6 +4,7 @@
 - `make extract` will build the compiler as `compiler/wasm2c`
 ## Running the compiler
 - Once the compiler has been built, you can run it with `./compiler/wasm2c <file.wasm>`
+- Pass `--ast` (`./compiler/wasm2c --ast <file.wasm>`) to print the Clight AST in Rocq-style syntax instead of C
 ## File structure
 - `theories/` contains the compiler written in Rocq, and proofs about it (coming soon!)
 - `compiler/` contains the extracted OCaml code
