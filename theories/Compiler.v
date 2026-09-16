@@ -2,36 +2,16 @@ From Wasm Require Import datatypes datatypes_properties operations numerics.
 From Stdlib Require Import PArith NArith ZArith String List.
 From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
-From Wasm2c Require Import Util Ident Memory Instantiate.
+From Wasm2c Require Import Util Ident Memory Instantiate Stack Extern.
 
 Import ListNotations.
 Import Errors.
 
 Local Open Scope error_monad_scope.
 
-Definition wasm_type_to_clight_type (t : value_type) : res Ctypes.type :=
-  match t with
-  | T_num T_i32  => OK tuint        (* always 32 bits *)
-  | T_num T_i64  => OK tulong       (* always 64 bits *)
-  | T_num T_f32  => OK tfloat
-  | T_num T_f64  => OK tdouble
-  | T_ref _      => OK (tptr tvoid) (* don't care if it's a funcref or extern ref *)
-  | T_vec T_v128 => Error (msg "No Clight equivalent for T_vec T_v128") 
-  | T_bot        => Error (msg "No Clight equivalent for T_bot")
-  end.
-
-Fixpoint wasm_types_to_clight_types (ts : list value_type) 
-  : res (list Ctypes.type) :=
-  match ts with
-  | nil => OK nil
-  | t :: rest => do t' <- wasm_type_to_clight_type t;
-                 do rest' <- wasm_types_to_clight_types rest;
-                 OK (t' :: rest')
-  end.
-
-(** turn a list of Wasm variables into a list of Clight variables. base is the 
+(** turn a list of Wasm variables into a list of Clight variables. base is the
     first fresh identifier *)
-Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type) 
+Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type)
   : res (list (AST.ident * Ctypes.type)) :=
   match ts with
   | nil => OK nil
@@ -41,13 +21,13 @@ Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type)
   end.
 
 (** normal parameters + Wasm instance pointer *)
-Definition wasm_params_to_clight_params (ts : list value_type) 
+Definition wasm_params_to_clight_params (ts : list value_type)
   : res (list (AST.ident * Ctypes.type)) :=
   do params <- wasm_vars_to_clight_vars 0 ts;
   OK ((ident_inst, tinst_ptr) :: params).
 
 (** convert Wasm return type into Clight return type *)
-Definition wasm_return_to_clight_return (ts : list value_type) 
+Definition wasm_return_to_clight_return (ts : list value_type)
   : res Ctypes.type :=
   match ts with
   | nil         => OK tvoid
@@ -61,60 +41,21 @@ Definition clight_of_functype (tf : function_type)
   let 'Tf ts1 ts2 := tf in
     do ret <- wasm_return_to_clight_return ts2;
     do ps <- wasm_params_to_clight_params ts1;
-    OK (ret, ps)
-  .
-
-(** compiler state records the current stack and the max depth of the stack *)
-Record compiler_state : Type := {
-  stack : list value_type; (* head is the top of the stack *)
-  max_depth : N
-}.
-
-Definition depth (s : list value_type) : N := N.of_nat (List.length s).
-
-Definition cs_push (cs : compiler_state) (t : value_type) : compiler_state :=
-  {| 
-    stack := t :: cs.(stack);
-    max_depth := N.max cs.(max_depth) (N.succ (depth cs.(stack)))
-  |}.
-
-(** turn a Wasm type + natural number into a Clight identifier *)
-Definition slot_ident (t : value_type) (d : N) : res AST.ident :=
-  match t with
-  | T_num T_i32 => OK (ident_of_i32_slot d)
-  | T_num T_i64 => OK (ident_of_i64_slot d)
-  | T_num T_f32 => OK (ident_of_f32_slot d)
-  | T_num T_f64 => OK (ident_of_f64_slot d)
-  | T_ref _     => OK (ident_of_ref_slot d)
-  | _ => Error (msg "unsupported stack slot type")
-  end.
-
-(** return a Clight expression for the variable at depth d in the stack. depth 0
-    is the bottom, etc. *)
-Definition slot_expr (t : value_type) (d : N) : res Clight.expr :=
-  do id <- slot_ident t d;
-  do ty <- wasm_type_to_clight_type t;
-  OK (Clight.Etempvar id ty).
-
-(** return a Clight statement representing a push to the stack *)
-Definition push_expr (t : value_type) (cs : compiler_state) (e : Clight.expr)
-  : res (list Clight.statement * compiler_state) :=
-  do id <- slot_ident t (depth cs.(stack));
-  OK ([Clight.Sset id e], cs_push cs t).
+    OK (ret, ps).
 
 (** convert a single Wasm basic_instruction to 1+ Clight statements *)
-Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction) 
+Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   : res (list Clight.statement * compiler_state) :=
   match instr with
   (* numeric instructions *)
-  | BI_const_num val => 
+  | BI_const_num val =>
     match val with
     | VAL_int32 num   => push_expr (T_num T_i32) cs (Clight.Econst_int (Integers.Int.repr (Wasm_int.Z_of_uint i32m num)) tuint)
     | VAL_int64 num   => push_expr (T_num T_i64) cs (Clight.Econst_long (Integers.Int64.repr (Wasm_int.Z_of_uint i64m num)) tulong)
     | VAL_float32 num => push_expr (T_num T_f32) cs (Clight.Econst_single num tfloat)
     | VAL_float64 num => push_expr (T_num T_f64) cs (Clight.Econst_float num tdouble)
     end
-  | BI_unop ty op => Error (msg "unop not supported") 
+  | BI_unop ty op => Error (msg "unop not supported")
   | BI_binop ty op =>
     match ty with
     | T_i32 =>
@@ -191,18 +132,18 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | BI_elem_drop idx => Error (msg "elem_drop not supported")
 
   (* linear memory instrs *)
-  | BI_load ty opt_ty_sx arg => Error (msg "load not supported")
-  | BI_load_vec varg marg => Error (msg "load_vec not supported")
-  | BI_load_vec_lane vw ma li => Error (msg "load_vec_lane not supported")
-  | BI_store nt opt ma => Error (msg "store not supported")
-  | BI_store_vec ma => Error (msg "store_vec not supported")
-  | BI_store_vec_lane vw ma li => Error (msg "store_vec_lane not supported")
-  | BI_memory_size => Error (msg "memory_size not supported")
-  | BI_memory_grow => Error (msg "memory_grow not supported")
-  | BI_memory_fill => Error (msg "memory_fill not supported")
-  | BI_memory_copy => Error (msg "memory_copy not supported")
-  | BI_memory_init idx => Error (msg "memory_init not supported")
-  | BI_data_drop idx => Error (msg "data_drop not supported")
+  | BI_load _ _ _           => compile_mem_instr cs instr
+  | BI_load_vec _ _         => compile_mem_instr cs instr
+  | BI_load_vec_lane _ _ _  => compile_mem_instr cs instr
+  | BI_store _ _ _          => compile_mem_instr cs instr
+  | BI_store_vec _          => compile_mem_instr cs instr
+  | BI_store_vec_lane _ _ _ => compile_mem_instr cs instr
+  | BI_memory_size          => compile_mem_instr cs instr
+  | BI_memory_grow          => compile_mem_instr cs instr
+  | BI_memory_fill          => compile_mem_instr cs instr
+  | BI_memory_copy          => compile_mem_instr cs instr
+  | BI_memory_init _        => compile_mem_instr cs instr
+  | BI_data_drop _          => compile_mem_instr cs instr
 
   (* control flow *)
   | BI_nop => Error (msg "nop not supported")
@@ -216,13 +157,13 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   | BI_return => Error (msg "return not supported")
   | BI_call idx => Error (msg "call not supported")
   | BI_call_indirect tidx tyidx => Error (msg "call_indirect not supported")
-  | BI_return_call idx => Error (msg "return_call not supported")           
+  | BI_return_call idx => Error (msg "return_call not supported")
   | BI_return_call_indirect tidx tyidx => Error (msg "return_call_indirect not supported")
   end.
 
 (** turn a list of Wasm instructions into a list of Clight statements*)
-Fixpoint instrs_to_statements 
-  (cs : compiler_state) 
+Fixpoint instrs_to_statements
+  (cs : compiler_state)
   (body : list basic_instruction)
   : res (list Clight.statement * compiler_state) :=
   match body with
@@ -254,7 +195,7 @@ Definition return_stmt (ret_type : list value_type) (cs : compiler_state)
   end.
 
 (** compile the body of a Wasm function into a Clight statement *)
-Definition compile_body (ret_type : list value_type) (body : expr) 
+Definition compile_body (ret_type : list value_type) (body : expr)
   : res (Clight.statement * compiler_state) :=
   do (ss, cs) <- instrs_to_statements cs_initial body;
   do ret <- return_stmt ret_type cs;
@@ -265,13 +206,13 @@ Definition slot_temps (mk : N -> AST.ident) (ty : Ctypes.type) (h : N)
   : list (AST.ident * Ctypes.type) :=
   List.map (fun d => (mk (N.of_nat d), ty)) (List.seq 0 (N.to_nat h)).
 
-(** compile a Wasm function. Note: module_func defined in 
-    WasmCert-Coq/theories/datatypes.v:639; Clight.function defined in 
+(** compile a Wasm function. Note: module_func defined in
+    WasmCert-Coq/theories/datatypes.v:639; Clight.function defined in
     CompCert/cfrontend/Clight.v:135 *)
-Definition compile_func (m : module) (func : module_func) 
+Definition compile_func (m : module) (func : module_func)
   : res Clight.function :=
   match lookup_N m.(mod_types) func.(modfunc_type) with
-  | Some (Tf ts1 ts2 as func_type) => 
+  | Some (Tf ts1 ts2 as func_type) =>
     do (ret_type, params) <- clight_of_functype func_type;
     do locals <- wasm_vars_to_clight_vars (N.of_nat (List.length ts1)) func.(modfunc_locals);
     do (body, cs) <- compile_body ts2 func.(modfunc_body);
@@ -283,16 +224,22 @@ Definition compile_func (m : module) (func : module_func)
       slot_temps ident_of_ref_slot (tptr tvoid) cs.(max_depth)
     ) in
       OK (
-        Clight.mkfunction ret_type AST.cc_default params nil (locals ++ stack_temps) body
+        Clight.mkfunction
+          ret_type
+          AST.cc_default
+          params
+          scratch_vars
+          (locals ++ stack_temps ++ scratch_temps)
+          body
       )
   | None => Error (msg "function type couldn't be found in binary")
 end.
 
-(** compile a list of Wasm imported functions into a list of Clight external 
+(** compile a list of Wasm imported functions into a list of Clight external
     functions. idx is the ident number to start at *)
 Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
-  match imps with 
+  match imps with
   | nil => OK nil
   | imp :: rest =>
     match imp.(imp_desc) with
@@ -306,7 +253,7 @@ Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
           OK (
               (ident_of_func idx,
                AST.Gfun (Ctypes.External
-                        (AST.EF_external (string_of_name imp.(imp_name)) sg) 
+                        (AST.EF_external (string_of_name imp.(imp_name)) sg)
                         args ret AST.cc_default)
               ) :: rest'
           )
@@ -316,7 +263,7 @@ Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
     end
   end.
 
-(** compile Wasm functions into Clight functions, assigning identifiers starting 
+(** compile Wasm functions into Clight functions, assigning identifiers starting
     from idx *)
 Fixpoint compile_funcs_from (m : module) (idx : N) (funcs : list module_func)
   : res (list (AST.ident * AST.globdef Clight.fundef Ctypes.type)) :=
@@ -335,16 +282,16 @@ Definition compile_funcs (m : module)
   compile_funcs_from m (n_imported_functions m) m.(mod_funcs).
 
 (** structs *)
-Definition composites : list Ctypes.composite_definition := 
+Definition composites : list Ctypes.composite_definition :=
   [mem_composite; inst_composite].
 
-(** Note: module defined in WasmCert-Coq/theories/datatypes.v:740; 
+(** Note: module defined in WasmCert-Coq/theories/datatypes.v:740;
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)
 Definition compile (m : module) : Errors.res Clight.program :=
   do ce       <- Ctypes.build_composite_env composites;
   do fimports <- compile_func_imports m 0 m.(mod_imports);
   do inst     <- compile_instantiate m;
   do defs     <- compile_funcs m;
-  Ctypes.make_program composites 
-    (calloc_decl :: fimports ++ inst ++ defs)
+  Ctypes.make_program composites
+    (trap_decl :: calloc_decl :: realloc_decl :: memset_decl :: fimports ++ inst ++ defs)
     [ident_instantiate] 1%positive.
