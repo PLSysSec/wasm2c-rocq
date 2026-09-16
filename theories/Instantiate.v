@@ -2,7 +2,7 @@ From Wasm Require Import datatypes datatypes_properties operations numerics.
 From Stdlib Require Import PArith NArith ZArith String List.
 From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
-From Wasm2c Require Import Ident Util.
+From Wasm2c Require Import Ident Util Extern.
 
 Import ListNotations.
 Import Errors.
@@ -81,19 +81,6 @@ Definition set_mem_field (f : AST.ident) (e : Clight.expr)
   : res Clight.statement :=
   do ty <- mem_field_type f;
   OK (Clight.Sassign (mem_field f ty) e).
-
-Definition calloc_args : list Ctypes.type := [tulong; tulong].
-Definition calloc_ret : Ctypes.type := tptr tvoid.
-Definition tcalloc : Ctypes.type :=
-  Ctypes.Tfunction calloc_args calloc_ret AST.cc_default.
-
-(* using calloc instead of built in malloc because it zeroes memory *)
-Definition calloc_decl : AST.ident * AST.globdef Clight.fundef Ctypes.type :=
-  (ident_calloc,
-   AST.Gfun (Ctypes.External
-    (AST.EF_external "calloc"
-      (Ctypes.signature_of_type calloc_args calloc_ret AST.cc_default))
-    calloc_args calloc_ret AST.cc_default)).
 
 Definition wasm_page_size : N := 65536%N.
 Definition wasm_max_pages : N := 65536%N.

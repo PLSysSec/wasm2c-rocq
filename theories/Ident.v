@@ -17,7 +17,10 @@ Definition ident_of_data       (i : N) : AST.ident := ((N.succ_pos i)~1~1~0~0)%p
 Definition ident_of_scratch    (i : N) : AST.ident := ((N.succ_pos i)~1~1~0~1)%positive.
 Definition ident_of_builtin    (i : N) : AST.ident := ((N.succ_pos i)~1~1~1~0)%positive.
 
-Definition ident_calloc      : AST.ident := ident_of_runtime 0.
 Definition ident_instantiate : AST.ident := ident_of_builtin 0.
+Definition ident_calloc      : AST.ident := ident_of_runtime 0.
 Definition ident_trap        : AST.ident := ident_of_runtime 1.
+Definition ident_realloc     : AST.ident := ident_of_runtime 2.
+Definition ident_memset      : AST.ident := ident_of_runtime 3.
+
 Definition ident_inst        : AST.ident := (1~1~0~0~0)%positive.
