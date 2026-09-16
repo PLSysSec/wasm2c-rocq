@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         make \
         ca-certificates \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Then switch back to opam user (installing as root is weird)
@@ -61,6 +62,12 @@ COPY --chown=opam:opam _CoqProject .
 # Add vsrocq language server
 RUN opam install -y vsrocq-language-server.2.4.3+1 && \
       ln -sf "$(opam var bin)/vsrocqtop" /home/opam/.local/bin/vsrocqtop
+
+# Install Claude Code
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/opam/.local/bin:${PATH}"
+
+WORKDIR /workspaces/wasm2c-rocq
 
 ENV OPAMYES=1
 ENTRYPOINT ["opam", "exec", "--"]
