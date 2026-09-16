@@ -24,9 +24,14 @@ Definition scratch_u64 : AST.ident := ident_of_scratch 3.
 Definition scratch_f32 : AST.ident := ident_of_scratch 4.
 Definition scratch_f64 : AST.ident := ident_of_scratch 5.
 
+Definition scratch_ptr : AST.ident := ident_of_scratch 6.
+
 Definition scratch_vars : list (AST.ident * Ctypes.type) :=
   [(scratch_u8, tuchar); (scratch_u16, tushort); (scratch_u32, tuint);
    (scratch_u64, tulong); (scratch_f32, tfloat); (scratch_f64, tdouble)].
+
+Definition scratch_temps : list (AST.ident * Ctypes.type) :=
+  [(scratch_ptr, tptr tvoid)].
 
 Definition cell_type (cell : AST.ident) : res Ctypes.type :=
   if Pos.eqb cell scratch_u8  then OK tuchar  else

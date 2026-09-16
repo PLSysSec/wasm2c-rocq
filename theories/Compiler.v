@@ -229,7 +229,7 @@ Definition compile_func (m : module) (func : module_func)
           AST.cc_default
           params
           scratch_vars
-          (locals ++ stack_temps)
+          (locals ++ stack_temps ++ scratch_temps)
           body
       )
   | None => Error (msg "function type couldn't be found in binary")
@@ -293,5 +293,5 @@ Definition compile (m : module) : Errors.res Clight.program :=
   do inst     <- compile_instantiate m;
   do defs     <- compile_funcs m;
   Ctypes.make_program composites
-    (trap_decl :: calloc_decl :: fimports ++ inst ++ defs)
+    (trap_decl :: calloc_decl :: realloc_decl :: memset_decl :: fimports ++ inst ++ defs)
     [ident_instantiate] 1%positive.
