@@ -2,7 +2,7 @@ From Wasm Require Import datatypes datatypes_properties operations numerics.
 From Stdlib Require Import PArith NArith ZArith String List.
 From compcert Require cfrontend.Clight cfrontend.Ctypes cfrontend.Cop common.AST common.Errors lib.Integers.
 From compcert Require Import export.Ctypesdefs.
-From Wasm2c Require Import Ident Util.
+From Wasm2c Require Import Ident Util Instantiate Stack Trap.
 
 Import ListNotations.
 Import Errors.
