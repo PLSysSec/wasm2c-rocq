@@ -38,7 +38,7 @@ Definition n_defined_memories (m : module) : N :=
 Definition string_of_name (n : name) : String.string :=
   String.string_of_list_byte n.
 
-(** turn Z into const long expr -- unsignedness represented bc it's a tulong *)
+(** turn N into const long expr -- unsignedness represented bc it's a tulong *)
 Definition const_u64 (n : N) : Clight.expr :=
   Clight.Econst_long (Integers.Int64.repr (Z.of_N n)) tulong.
 
