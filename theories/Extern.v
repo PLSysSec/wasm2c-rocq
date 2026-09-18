@@ -1,4 +1,4 @@
-From Stdlib Require Import String List.
+From Stdlib Require Import String List ZArith.
 From compcert Require cfrontend.Clight cfrontend.Ctypes common.AST.
 From compcert Require Import export.Ctypesdefs.
 From Wasm2c Require Import Ident.
@@ -52,3 +52,8 @@ Definition memset_decl : AST.ident * AST.globdef Clight.fundef Ctypes.type :=
       (AST.EF_external "memset"
         (Ctypes.signature_of_type memset_args memset_ret AST.cc_default))
       memset_args memset_ret AST.cc_default)).
+
+(** returns a Clight statement to copy Z bytes of data from src to dst *)
+Definition copy_data (dst src : Clight.expr) (len : Z) : Clight.statement :=
+  (* 1-byte alignment so we don't have to worry alignment *)
+  Clight.Sbuiltin None (AST.EF_memcpy len 1) [tptr tvoid; tptr tvoid] [dst; src].

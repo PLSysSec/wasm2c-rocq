@@ -9,40 +9,6 @@ Import Errors.
 
 Local Open Scope error_monad_scope.
 
-(** turn a list of Wasm variables into a list of Clight variables. base is the
-    first fresh identifier *)
-Fixpoint wasm_vars_to_clight_vars (base : N) (ts : list value_type)
-  : res (list (AST.ident * Ctypes.type)) :=
-  match ts with
-  | nil => OK nil
-  | t :: ts' => do ty <- wasm_type_to_clight_type t;
-                do rest <- wasm_vars_to_clight_vars (N.succ base) ts';
-                OK (((ident_of_local base), ty) :: rest)
-  end.
-
-(** normal parameters + Wasm instance pointer *)
-Definition wasm_params_to_clight_params (ts : list value_type)
-  : res (list (AST.ident * Ctypes.type)) :=
-  do params <- wasm_vars_to_clight_vars 0 ts;
-  OK ((ident_inst, tinst_ptr) :: params).
-
-(** convert Wasm return type into Clight return type *)
-Definition wasm_return_to_clight_return (ts : list value_type)
-  : res Ctypes.type :=
-  match ts with
-  | nil         => OK tvoid
-  | t :: nil    => wasm_type_to_clight_type t
-  | _ :: _ :: _ => Error (msg "multi-value return not supported")
-  end.
-
-(** split Wasm function_type into Clight return type, and parameters *)
-Definition clight_of_functype (tf : function_type)
-  : res (Ctypes.type * list (AST.ident * Ctypes.type)) :=
-  let 'Tf ts1 ts2 := tf in
-    do ret <- wasm_return_to_clight_return ts2;
-    do ps <- wasm_params_to_clight_params ts1;
-    OK (ret, ps).
-
 (** convert a single Wasm basic_instruction to 1+ Clight statements *)
 Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   : res (list Clight.statement * compiler_state) :=
@@ -108,7 +74,7 @@ Definition instr_to_statement (cs : compiler_state) (instr : basic_instruction)
   (* reference instructions *)
   | BI_ref_null ty => Error (msg "ref_null not supported")
   | BI_ref_is_null => Error (msg "ref_is_null not supported")
-  | BI_ref_func idx => Error (msg "ref_func not supported")
+  | BI_ref_func idx => Error (msg "ref_func not supported") (* these might only be needed for elem instantiation *)
 
   (* parametric instructions *)
   | BI_drop => Error (msg "drop not supported")
@@ -246,7 +212,7 @@ Fixpoint compile_func_imports (m : module) (idx : N) (imps : list module_import)
     | MID_func tidx =>
       match lookup_N m.(mod_types) tidx with
       | Some (Tf ts1 ts2) =>
-        do args <- wasm_types_to_clight_types ts1;
+        do args  <- wasm_types_to_clight_types ts1;
         do ret <- wasm_return_to_clight_return ts2;
         do rest' <- compile_func_imports m (N.succ idx) rest;
         let sg := Ctypes.signature_of_type args ret AST.cc_default in
@@ -283,7 +249,7 @@ Definition compile_funcs (m : module)
 
 (** structs *)
 Definition composites : list Ctypes.composite_definition :=
-  [mem_composite; inst_composite].
+  [mem_composite; inst_composite; table_composite; elem_composite].
 
 (** Note: module defined in WasmCert-Coq/theories/datatypes.v:740;
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)

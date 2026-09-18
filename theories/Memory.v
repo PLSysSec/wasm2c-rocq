@@ -125,9 +125,9 @@ Definition compile_load (cs : compiler_state)
     (* addr + width > mem->size *)
     let oob := Clight.Ebinop Cop.Ogt
                  (Clight.Ebinop Cop.Oadd addr (const_u64 (Z.to_N width)) tulong)
-                 (mem_field mem_size tulong) tint in
+                 (mem_field mem_size) tint in
     let src := Clight.Ecast
-                 (Clight.Ebinop Cop.Oadd (mem_field mem_data (tptr tuchar))
+                 (Clight.Ebinop Cop.Oadd (mem_field mem_data)
                     addr (tptr tuchar))
                  (tptr tvoid) in
     let cell_ptr := Clight.Ecast
@@ -167,9 +167,9 @@ Definition compile_store (cs : compiler_state)
     (* addr + width > mem->size *)
     let oob := Clight.Ebinop Cop.Ogt
                  (Clight.Ebinop Cop.Oadd addr (const_u64 (Z.to_N width)) tulong)
-                 (mem_field mem_size tulong) tint in
+                 (mem_field mem_size) tint in
     let dst := Clight.Ecast
-                 (Clight.Ebinop Cop.Oadd (mem_field mem_data (tptr tuchar))
+                 (Clight.Ebinop Cop.Oadd (mem_field mem_data)
                    addr (tptr tuchar))
                  (tptr tvoid) in
     let cell_ptr := Clight.Ecast
@@ -189,7 +189,7 @@ Definition compile_store (cs : compiler_state)
 
 Definition compile_memory_size (cs : compiler_state)
   : res (list Clight.statement * compiler_state) :=
-  push_expr (T_num T_i32) cs (Clight.Ecast (mem_field mem_pages tulong) tuint).
+  push_expr (T_num T_i32) cs (Clight.Ecast (mem_field mem_pages) tuint).
 
 
 Definition compile_memory_grow (cs : compiler_state)
@@ -200,14 +200,14 @@ Definition compile_memory_grow (cs : compiler_state)
     do delta <- slot_expr (T_num T_i32) d;
     do slot  <- slot_ident (T_num T_i32) d;
     let delta64   := Clight.Ecast delta tulong in
-    let pages     := mem_field mem_pages tulong in
+    let pages     := mem_field mem_pages in
     let page_size := const_u64 wasm_page_size in
     let p         := Clight.Etempvar scratch_ptr (tptr tvoid) in
     (* new_pages = mem->pages + (uint64_t)delta *)
     let new_pages := Clight.Ebinop Cop.Oadd pages delta64 tulong in
     (* new_pages > mem->max_pages *)
     let too_big := Clight.Ebinop Cop.Ogt new_pages
-                    (mem_field mem_max_pages tulong) tint in
+                    (mem_field mem_max_pages) tint in
     (* delta == 0 *)
     let no_change := Clight.Ebinop Cop.Oeq delta
                       (Clight.Econst_int Integers.Int.zero tuint) tint in
@@ -222,14 +222,14 @@ Definition compile_memory_grow (cs : compiler_state)
     (* p = realloc(mem->data, new_pages * 65536) *)
     let call_realloc :=
       Clight.Scall (Some scratch_ptr) (Clight.Evar ident_realloc trealloc)
-        [Clight.Ecast (mem_field mem_data (tptr tuchar)) (tptr tvoid);
+        [Clight.Ecast (mem_field mem_data) (tptr tvoid);
          Clight.Ebinop Cop.Omul new_pages page_size tulong] in
     (* memset((uint8_t * )p + mem->size, 0, (uint64_t)delta * 65536) *)
     let call_memset :=
       Clight.Scall None (Clight.Evar ident_memset tmemset)
         [Clight.Ecast
           (Clight.Ebinop Cop.Oadd (Clight.Ecast p (tptr tuchar))
-            (mem_field mem_size tulong) (tptr tuchar))
+            (mem_field mem_size) (tptr tuchar))
           (tptr tvoid);
          Clight.Econst_int Integers.Int.zero tint;
          Clight.Ebinop Cop.Omul delta64 page_size tulong] in
