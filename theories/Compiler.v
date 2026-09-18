@@ -249,7 +249,7 @@ Definition compile_funcs (m : module)
 
 (** structs *)
 Definition composites : list Ctypes.composite_definition :=
-  [mem_composite; inst_composite].
+  [mem_composite; inst_composite; table_composite; elem_composite].
 
 (** Note: module defined in WasmCert-Coq/theories/datatypes.v:740;
     Clight.program defined in CompCert/cfrontend/Ctypes.v:1545 *)

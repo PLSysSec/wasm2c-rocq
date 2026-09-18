@@ -355,6 +355,8 @@ Definition compile_instantiate (m : module)
              [(ident_inst, tinst_ptr)]        (* params *)
              nil                              (* vars   *)
              [(ident_of_local 0, tptr tvoid); (* temps  *)
-              (ident_of_local 1, tptr tvoid)]
+              (ident_of_local 1, tptr tvoid);
+              (ident_of_local 2, tptr tvoid);
+              (ident_of_local 3, tptr tvoid)]
              body in
   OK (data_defs ++ [(ident_instantiate, AST.Gfun (Ctypes.Internal f))]).

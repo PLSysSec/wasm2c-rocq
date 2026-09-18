@@ -22,20 +22,20 @@ Definition ident_of_mem_field       (i : N) : AST.ident := ((N.succ_pos i)~0~1~1
 Definition ident_of_elem_field     (i : N) : AST.ident := ((N.succ_pos i)~1~0~0~0~0)%positive.
 Definition ident_of_table_field    (i : N) : AST.ident := ((N.succ_pos i)~1~0~0~0~1)%positive.
 
-Definition inst_struct_id : AST.ident := ident_of_struct 0.
-Definition tinst : Ctypes.type := Ctypes.Tstruct inst_struct_id Ctypes.noattr.
-Definition tinst_ptr : Ctypes.type := tptr tinst.
+Definition inst_struct_id   : AST.ident := ident_of_struct 0.
+Definition tinst            : Ctypes.type := Ctypes.Tstruct inst_struct_id Ctypes.noattr.
+Definition tinst_ptr        : Ctypes.type := tptr tinst.
 
-Definition mem_struct_id : AST.ident := ident_of_struct 1.
-Definition tmem : Ctypes.type := Ctypes.Tstruct mem_struct_id Ctypes.noattr.
-Definition tmem_ptr : Ctypes.type := tptr tmem.
+Definition mem_struct_id    : AST.ident := ident_of_struct 1.
+Definition tmem             : Ctypes.type := Ctypes.Tstruct mem_struct_id Ctypes.noattr.
+Definition tmem_ptr         : Ctypes.type := tptr tmem.
 
-Definition elem_struct_id : AST.ident := ident_of_struct 2.
-Definition t_elem : Ctypes.type := Ctypes.Tstruct elem_struct_id Ctypes.noattr.
+Definition elem_struct_id   : AST.ident := ident_of_struct 2.
+Definition t_elem           : Ctypes.type := Ctypes.Tstruct elem_struct_id Ctypes.noattr.
 
-Definition table_struct_id : AST.ident := ident_of_struct 3.
-Definition ttable : Ctypes.type := Ctypes.Tstruct table_struct_id Ctypes.noattr.
-Definition ttable_ptr : Ctypes.type := tptr ttable.
+Definition table_struct_id  : AST.ident := ident_of_struct 3.
+Definition ttable           : Ctypes.type := Ctypes.Tstruct table_struct_id Ctypes.noattr.
+Definition ttable_ptr       : Ctypes.type := tptr ttable.
 
 Definition mem_data      : AST.ident := ident_of_mem_field 0.
 Definition mem_pages     : AST.ident := ident_of_mem_field 1.
